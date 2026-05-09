@@ -92,6 +92,42 @@
     }
     .floating-tip.visible { opacity: 1; visibility: visible; }
     footer { font-size: 10px; color: #888; text-align: center; margin-top: 6px; }
+
+    /* v0.7.15: crawl-speed preset slider. The thematic colour --preset-color
+       is set on #crawl-speed at runtime from the active preset's themeColor
+       — no hex literals live in this stylesheet. */
+    #crawl-speed { padding: 8px 4px 4px; margin-bottom: 6px; --preset-color: #888; }
+    #crawl-speed .row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    #crawl-speed .row strong { font-size: 12px; }
+    #crawl-speed .chip {
+      display: inline-block; min-width: 60px; padding: 2px 6px;
+      border-radius: 10px; background: var(--preset-color); color: #fff;
+      font-size: 11px; font-weight: 700; text-align: center;
+      transition: background .15s;
+    }
+    #crawl-speed-track {
+      width: 100%; margin: 4px 0 2px; appearance: none; -webkit-appearance: none;
+      height: 4px; background: #ddd; border-radius: 2px; outline: none;
+    }
+    #crawl-speed-track::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--preset-color); border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      cursor: pointer; transition: background .15s;
+    }
+    #crawl-speed-track::-moz-range-thumb {
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--preset-color); border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      cursor: pointer; transition: background .15s;
+    }
+    #crawl-speed .ticks {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: #666; padding: 0 2px;
+    }
+    #crawl-speed .ticks span { flex: 0 0 auto; }
+    #crawl-speed .ticks span.active { color: var(--preset-color); font-weight: 700; }
   `;
 
   function ensureUI() {
@@ -132,6 +168,19 @@
               <span class="info-tip" data-tip="Walks every category from page 1, refreshing all listings. Slow — 10–30 minutes. Use after schema changes or to seed a fresh database.">?</span>
             </span>
           </section>
+          <section id="crawl-speed">
+            <div class="row">
+              <strong>Crawl speed</strong>
+              <span id="crawl-speed-chip" class="chip">Fastest</span>
+              <span class="info-tip" id="crawl-speed-info" data-tip="">?</span>
+            </div>
+            <input id="crawl-speed-track" type="range" min="0" max="2" step="1" value="0" />
+            <div class="ticks">
+              <span data-pos="0">Fastest</span>
+              <span data-pos="1">Balanced</span>
+              <span data-pos="2">Safest</span>
+            </div>
+          </section>
           <section id="actions2">
             <span class="btn-with-info">
               <button id="act-export" class="btn">Export JSON now</button>
@@ -170,7 +219,7 @@
   function wirePanel() {
     $('#fab').addEventListener('click', () => {
       const p = $('#panel'); p.hidden = !p.hidden;
-      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); }
+      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); hydrateCrawlSpeedSlider(); }
     });
     const exportSampleEl = $('#opt-export-sample');
     if (exportSampleEl) {
@@ -179,6 +228,7 @@
         catch (e) { warn('persist exportSampleEnabled failed', e); }
       });
     }
+    wireCrawlSpeedSlider();
     $('#panel-close').addEventListener('click', () => { $('#panel').hidden = true; });
     $('#act-full').addEventListener('click', () => runFullFetch());
     $('#act-incremental').addEventListener('click', () => runIncrementalFetch());
@@ -288,6 +338,73 @@
   function isExportSampleEnabled() {
     try { return !!GM_getValue(GM_KEY_EXPORT_SAMPLE, false); }
     catch (e) { return false; }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // v0.7.15: crawl-speed preset slider
+  // ─────────────────────────────────────────────────────────────────────────
+  // The 3-position snap slider in the panel maps integer 0/1/2 → preset
+  // key. Persistence + module-state cache live in 01-constants.js
+  // (GM_KEY_CRAWL_SPEED_PRESET, getActivePresetKey/setActivePresetKey).
+  // Theme colour is the single source of truth on CRAWL_SPEED_PRESETS — it
+  // is propagated to the slider styling exclusively via the
+  // --preset-color CSS custom property set on #crawl-speed.
+  const CRAWL_SPEED_SLIDER_KEYS = [PRESET_FASTEST, PRESET_BALANCED, PRESET_SAFEST];
+
+  function presetKeyFromSliderPos(pos) {
+    const idx = Math.max(0, Math.min(2, parseInt(pos, 10) || 0));
+    return CRAWL_SPEED_SLIDER_KEYS[idx];
+  }
+  function sliderPosFromPresetKey(key) {
+    const idx = CRAWL_SPEED_SLIDER_KEYS.indexOf(key);
+    return idx < 0 ? 0 : idx;
+  }
+
+  function applyCrawlSpeedTheme(presetKey) {
+    if (!uiShadow) return;
+    const preset = CRAWL_SPEED_PRESETS[presetKey] || CRAWL_SPEED_PRESETS[PRESET_FASTEST];
+    const root = uiShadow.getElementById('crawl-speed');
+    if (root) root.style.setProperty('--preset-color', preset.themeColor);
+    const chip = uiShadow.getElementById('crawl-speed-chip');
+    if (chip) chip.textContent = preset.label;
+    const ticks = uiShadow.querySelectorAll('#crawl-speed .ticks span');
+    const activePos = sliderPosFromPresetKey(presetKey);
+    ticks.forEach((el) => {
+      const isActive = parseInt(el.getAttribute('data-pos'), 10) === activePos;
+      el.classList.toggle('active', isActive);
+    });
+    const info = uiShadow.getElementById('crawl-speed-info');
+    if (info) {
+      const tips = {
+        [PRESET_FASTEST]:  'Fastest: matches v0.7.14 timing; higher detection risk. Default.',
+        [PRESET_BALANCED]: 'Balanced: ~1.75× slower with wider jitter and more frequent human-pause injections; moderate risk.',
+        [PRESET_SAFEST]:   'Safest: ~3.5× slower with maximum jitter and longest pauses; lowest detection risk. Use after a TM rate-limit warning or outside normal hours.',
+      };
+      info.setAttribute('data-tip', tips[presetKey] || tips[PRESET_FASTEST]);
+    }
+  }
+
+  function hydrateCrawlSpeedSlider() {
+    if (!uiShadow) return;
+    const slider = uiShadow.getElementById('crawl-speed-track');
+    if (!slider) return;
+    const key = getActivePresetKey();
+    slider.value = String(sliderPosFromPresetKey(key));
+    applyCrawlSpeedTheme(key);
+  }
+
+  function wireCrawlSpeedSlider() {
+    const slider = $('#crawl-speed-track');
+    if (!slider) return;
+    // 'input' (not 'change') so the chip + theme update LIVE while the
+    // user drags, and the integer-step constraint snaps the thumb to one
+    // of the three positions automatically.
+    slider.addEventListener('input', () => {
+      const key = presetKeyFromSliderPos(slider.value);
+      setActivePresetKey(key);
+      applyCrawlSpeedTheme(key);
+    });
+    hydrateCrawlSpeedSlider();
   }
 
   async function refreshPanelStatus() {

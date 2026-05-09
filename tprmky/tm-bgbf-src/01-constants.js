@@ -2,7 +2,7 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.14';
+  const VERSION = '0.7.15';
   const LOG_PREFIX = '[bgbf]';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -26,13 +26,129 @@
     'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
   ];
-  // Long "human pause" frequency (1 in N requests). The pause is 3×–6× the
-  // normal mean, immediately offset by shortening the next 2–3 polite sleeps
-  // so the overall budget is unchanged. See politeSleep() in 04-utilities.js.
-  const HUMAN_PAUSE_FREQUENCY = 32;     // 1-in-32 (within the requested 25–40 band)
-  const HUMAN_PAUSE_MULT_MIN  = 3;
-  const HUMAN_PAUSE_MULT_MAX  = 6;
-  const HUMAN_PAUSE_COMPENSATION_REQUESTS = 3;  // spread the offset across the next N polite sleeps
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Crawl-speed presets (v0.7.15)
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRAWL_SPEED_PRESETS is the single source of truth for every
+  // humanization tunable that affects per-request timing. The active key is
+  // exposed via getActivePresetKey() / getActivePresetConfig() and is
+  // selected by the user via the dashboard slider in 14-ui.js. The runtime
+  // pacing in 04-utilities.js (politeSleep) and 07-network.js (fetchHtml
+  // retry backoff) reads from the active preset at use-time so a mid-crawl
+  // switch affects subsequent requests without restarting the run.
+  //
+  // Tunable fields (all numeric except label / themeColor):
+  //   delayMultiplier          — scales the polite-sleep mean. settings.politeDelayMs * delayMultiplier = mean.
+  //   delayJitterRange         — width coefficient on the triangular kernel; larger = wider spread.
+  //                              The formula `delta = mean * (triKernel * R + (1 - R/2))` keeps E[delta] = mean
+  //                              for any R, since E[triKernel] = 0.5.
+  //   delayLoMult / delayHiMult — post-clamp bounds expressed as multiples of mean. Triangular sums concentrate
+  //                              tightly around the mean so clamp tails barely shift E[delta].
+  //   humanPauseFrequency      — 1-in-N polite-sleep cadence at which a long pause MAY fire.
+  //   humanPauseProbability    — probability the cadence-tick actually fires (so the pause itself isn't periodic).
+  //   humanPauseMultMin/Max    — pause length is mean * uniform(min, max).
+  //   humanPauseCompensationRequests — N sleeps over which to refund the extra time. Only active for FASTEST
+  //                              and BALANCED — SAFEST deliberately under-refunds (see comment) so net average
+  //                              actually grows in the safest mode.
+  //   retryJitterMin / retryJitterMax — multiplicative jitter applied to the exponential backoff base on retry.
+  //
+  // Justifications for the chosen multipliers:
+  //   FASTEST  — must match v0.7.14 behaviour exactly so upgraders see no change. delayMultiplier=1.0, kernel
+  //              coefficient 2.4 with [-0.2, +1.6]X clamp window: identical numbers to the previous top-level
+  //              constants. Default for first-run users. Themed red since this is the highest-detection-risk mode.
+  //   BALANCED — ~1.75x mean, ~25% wider jitter, human pauses ~2x more frequent (1-in-18 within the user-suggested
+  //              15-25 band), pauses themselves ~30% longer; backoff jitter spread roughly doubled. Picks a
+  //              middle-ground operating point for a typical session.
+  //   SAFEST   — ~3.5x mean (in the 3-4x band), kernel approaching uniform-random across a wide window, human
+  //              pauses 1-in-10 (within the 8-12 band) and substantially longer; longest backoff windows on retry.
+  //              Use after a TM rate-limit warning or when crawling outside normal hours.
+  //
+  // Color theming: red for FASTEST (#c0392b — pre-existing in the codebase), orange for BALANCED (#e67e22 —
+  // same saturation family), green for SAFEST (#09b17d — matches the v1.6.19/1.6.20 Show-ALL-Listings green).
+  // These three hex literals MUST live ONLY in this object — every consumer reads them via the
+  // --preset-color CSS custom property set by the slider rendering code.
+
+  const PRESET_FASTEST  = 'fastest';
+  const PRESET_BALANCED = 'balanced';
+  const PRESET_SAFEST   = 'safest';
+
+  const CRAWL_SPEED_PRESETS = {
+    [PRESET_FASTEST]: {
+      label: 'Fastest',
+      themeColor: '#c0392b',
+      delayMultiplier: 1.0,
+      delayJitterRange: 2.4,
+      delayLoMult: 0.4,
+      delayHiMult: 1.6,
+      humanPauseFrequency: 32,
+      humanPauseProbability: 0.5,
+      humanPauseMultMin: 3,
+      humanPauseMultMax: 6,
+      humanPauseCompensationRequests: 3,
+      retryJitterMin: 0.7,
+      retryJitterMax: 1.4,
+    },
+    [PRESET_BALANCED]: {
+      label: 'Balanced',
+      themeColor: '#e67e22',
+      delayMultiplier: 1.75,
+      delayJitterRange: 3.0,
+      delayLoMult: 0.35,
+      delayHiMult: 1.85,
+      humanPauseFrequency: 18,
+      humanPauseProbability: 0.6,
+      humanPauseMultMin: 4,
+      humanPauseMultMax: 8,
+      humanPauseCompensationRequests: 4,
+      retryJitterMin: 0.5,
+      retryJitterMax: 2.0,
+    },
+    [PRESET_SAFEST]: {
+      label: 'Safest',
+      themeColor: '#09b17d',
+      delayMultiplier: 3.5,
+      delayJitterRange: 4.0,
+      delayLoMult: 0.25,
+      delayHiMult: 2.0,
+      humanPauseFrequency: 10,
+      humanPauseProbability: 0.8,
+      humanPauseMultMin: 5,
+      humanPauseMultMax: 10,
+      humanPauseCompensationRequests: 5,
+      retryJitterMin: 0.4,
+      retryJitterMax: 3.0,
+    },
+  };
+
+  // Module-scope cache of the active preset key. Hydrated from GM-storage on
+  // first read; updated by the slider's input handler in 14-ui.js. Reading
+  // from GM-storage on every fetch would be unnecessarily synchronous I/O.
+  // Note: each browser tab has its own module scope, so a preset change in
+  // one tab does NOT propagate to other tabs without a reload — acceptable
+  // for a single-user tool. Mid-crawl preset switches affect ONLY requests
+  // issued AFTER the switch; an already-in-flight `await sleep(…)` is not
+  // shortened or extended retroactively.
+  let _activePresetKey = null;
+  function getActivePresetKey() {
+    if (_activePresetKey == null) {
+      try {
+        const stored = GM_getValue(GM_KEY_CRAWL_SPEED_PRESET, PRESET_FASTEST);
+        _activePresetKey = (stored in CRAWL_SPEED_PRESETS) ? stored : PRESET_FASTEST;
+      } catch (e) {
+        _activePresetKey = PRESET_FASTEST;
+      }
+    }
+    return _activePresetKey;
+  }
+  function setActivePresetKey(key) {
+    if (!(key in CRAWL_SPEED_PRESETS)) return;
+    _activePresetKey = key;
+    try { GM_setValue(GM_KEY_CRAWL_SPEED_PRESET, key); } catch (e) { /* non-fatal */ }
+  }
+  function getActivePresetConfig() {
+    return CRAWL_SPEED_PRESETS[getActivePresetKey()];
+  }
 
   // Categories crawled by the bulk fetcher.
   //
@@ -245,5 +361,9 @@
   // v0.7.14: panel checkbox for the optional listings-example.json export.
   // Stored as a plain boolean via GM_setValue/GM_getValue. Default false.
   const GM_KEY_EXPORT_SAMPLE = 'exportSampleEnabled';
+  // v0.7.15: persisted crawl-speed preset key (one of PRESET_FASTEST /
+  // PRESET_BALANCED / PRESET_SAFEST). Default 'fastest' so upgraders from
+  // v0.7.14 see identical timing.
+  const GM_KEY_CRAWL_SPEED_PRESET = 'crawlSpeedPreset';
 
 // ============================================================================
