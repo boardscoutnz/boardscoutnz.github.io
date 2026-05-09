@@ -7,7 +7,7 @@
 // 2. Configuration
 // ============================================================================
 
-const APP_VERSION = '1.6.20';
+const APP_VERSION = '1.6.21';
 const BGG_RANKINGS_URL = './data/bgg-rankings.json';
 const LISTINGS_URL  = './data/listings.json';
 
@@ -180,6 +180,39 @@ const PUNCT_RX  = /[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~\u2010-\u2015\u2018-\u20
 const QTY_RX    = /\b\d{2,4}\s*(?:piece|pieces|pcs|pc|cards?)\b/gi;
 const YEAR_RX   = /\b(19|20)\d{2}\b/g;
 const MULTISP   = /\s+/g;
+
+// v1.6.21: apostrophes (straight + curly variants) are stripped WITHOUT
+// inserting a space, so "It's" and "Its" both normalise to "its". The
+// previous PUNCT_RX path replaced apostrophes with a space, splitting
+// "It's a Wonderful World" into ["it","s","a","wonderful","world"] and
+// the lone "s" survived NOISE stripping while "Its" did not \u2014 so the
+// two surface forms produced different normalised strings. APOSTROPHE_RX
+// must run BEFORE PUNCT_RX in normalizeTitle.
+const APOSTROPHE_RX = /['\u2018\u2019\u201A\u201B\u2032]/g;
+
+// v1.6.21: parenthetical genre markers like "(Board Game)" or "(Card
+// Game)" are pure clarifiers, not part of identity. Stripped to a space
+// BEFORE the sentinel pass turns "board game" into the identity-bearing
+// sentinel "boardgame" \u2014 otherwise listings like "Root (Board Game)"
+// canonicalise to "root boardgame" while the BGG entry is just "root".
+// Bare (non-parenthesised) "Card Game" / "Board Game" are still handled
+// by SENTINEL_REPLACEMENTS for cases like "Power Grid: The Card Game".
+const PAREN_GENRE_RX = /\(\s*(?:board\s*game|card\s*game|tabletop\s*game|the\s*game|game)\s*\)/gi;
+
+// v1.6.21: publisher names that frequently appear as a prefix or suffix
+// in TM listing titles ("Pandasaurus Games \u2014 FOO" / "FOO - Rio Grande
+// Games"). Stripped from the LISTING side at match time only \u2014 BGG
+// primary names don't include publishers, so applying the same strip
+// to BGG would lose distinctions for entries that legitimately start
+// with one of these tokens. Case-insensitive comparison; the matcher
+// lowercases first and the stripper builds a lowercase regex.
+const MATCH_PUBLISHER_NAMES = [
+  'Leder', 'Wilder', 'Next Move', 'Devir', 'Stonemaier', 'Plan B',
+  'Awaken Realms', 'Mantic', 'Rio Grande', 'Gibsons', 'Holdson', 'Portal',
+  'GMT', 'Gale Force 9', 'Garphill', 'Allplay', 'Pandasaurus', 'Flatout',
+  'Z-Man', 'Fantasy Flight', 'Days of Wonder', 'Asmodee', 'AEG',
+  'Alderac', 'Amigo', 'Mayfair', 'Mattel', 'Bezier',
+];
 
 // BGG match-confidence thresholds.
 const FUSE_THRESHOLD = 0.3;

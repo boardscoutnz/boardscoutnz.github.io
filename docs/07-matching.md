@@ -81,6 +81,45 @@ board game / boardgame                      → boardgame
 Any phrase added to `SENTINEL_REPLACEMENTS` MUST be removed from
 `NOISE_TOKENS` — leaving it there strips the sentinel back out.
 
+### normalizeTitle pipeline order (v1.6.21)
+
+The order of substitutions inside `normalizeTitle` is load-bearing:
+
+1. lowercase
+2. **diacritic fold** — `s.normalize('NFD').replace(/[̀-ͯ]/g,'')`
+   so `Orléans` ≡ `Orleans`, `Kutná Hora` ≡ `Kutna Hora`,
+   `Pâtisserie` ≡ `Patisserie`. Pure-ASCII titles are unaffected.
+3. **`APOSTROPHE_RX → ''`** (no space) — strips both straight `'` and
+   curly U+2018-U+201F variants. Runs BEFORE PUNCT_RX, which would
+   otherwise inject a space and split `It's` into `it` + `s`. With
+   apostrophe-strip first, `It's` → `Its` matches the unapostrophised
+   surface form.
+4. **`PAREN_GENRE_RX → ' '`** — drops bracketed clarifiers like
+   `(Board Game)`, `(Card Game)`, `(Tabletop Game)`, `(Game)`,
+   `(The Game)`. Runs BEFORE the sentinel pass — otherwise
+   `Root (Board Game)` would canonicalise to `root boardgame` while the
+   BGG entry is just `root`. Bare (non-parenthesised) `Card Game` /
+   `Board Game` are still handled by `SENTINEL_REPLACEMENTS` for cases
+   like `Power Grid: The Card Game`.
+5. PUNCT_RX → ' ', QTY_RX → ' ', YEAR_RX → ' '
+6. SENTINEL_REPLACEMENTS
+7. NOISE_TOKENS strip
+8. MULTISP collapse + trim
+
+### Publisher-name pre-strip (listing side only)
+
+`stripPublisherFromListing(title)` (in `js/06-matching.js`) removes a
+single recognised publisher prefix and/or suffix from the LISTING title
+before normalisation. Drives e.g. `FINCA - Rio Grande Games` → `FINCA` →
+match against BGG `Finca`. Matches `MATCH_PUBLISHER_NAMES` (in §2)
+case-insensitively, with optional trailing ` Games`, allowing
+hyphen/colon/em-dash separators.
+
+Listing-only — `js/05-bgg-cache.js` calls `normalizeTitle` directly on
+BGG names. Stripping publishers from the BGG side would lose
+distinctions for entries that legitimately start with one of these
+tokens.
+
 ### Async chunked enrichment
 
 `enrichListingsWithBgg` is `async` — processes in batches of

@@ -1,5 +1,5 @@
 
-## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.16)
+## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.17)
 
 Runs at `https://www.trademe.co.nz/*`. ~2560 lines. Pipeline: menu click →
 build URL list (8 categories × 2 conditions = 16 passes, **shuffled per
@@ -27,6 +27,18 @@ Two regexes drive title classification:
   Sleeve, Folded Space, Gamegenic, Ultra Pro, etc.) folded in for v0.7.11.
 - **`EXPANSION_TRIGGER_RX`** + **`BASE_GAME_QUALIFIER_RX`** (used by
   `detectIsExpansion`) — see below.
+
+### Run-history log (v0.7.17)
+
+Every Quick Run / Full Fetch records a summary entry to GM-storage under
+`runHistory.v1` on completion: `startedAt`, `completedAt`, `durationMs`,
+`durationLabel` (pre-formatted `Xm Ys`), `type` (`full` / `incremental`),
+`crawlSpeedPreset` + `crawlSpeedLabel` captured at run start (so a
+mid-run slider change doesn't misattribute), `listings` count and
+`outcome` (`complete` / `aborted` / `error`). Capped at 50 entries
+(rolling FIFO). The dashboard panel renders the 10 most recent below the
+options section, with a "Clear" button. Errors during persistence are
+swallowed (`dbg('run', …)`) so the run-completion path stays unbreakable.
 
 ### Crawl-speed preset slider (v0.7.15)
 

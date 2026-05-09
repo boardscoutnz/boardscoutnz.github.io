@@ -11,15 +11,25 @@
   function setProgress(p) { runState.progress = { ...runState.progress, ...p }; emitRun(); }
   function onRun(fn) { runState.listeners.add(fn); return () => runState.listeners.delete(fn); }
 
+  // v0.7.17: captured at run-start so a mid-run slider change doesn't
+  // misattribute the run in the history log. Read by recordRunHistory()
+  // in 17-run-history.js via the shared IIFE closure.
+  let _runStartPresetKey = null;
+
   async function runFullFetch(opts = {}) {
     grp('run', `=== runFullFetch starting === (opts: ${JSON.stringify(opts)})`);
     const runT = startTimer();
+    // v0.7.17: capture wall-clock + preset before the active-run guard.
+    const startedAtIso = nowIso();
+    const startMs = Date.now();
     if (runState.active) {
       dbgWarn('run', 'a run is already active; ignoring this call');
       grpEnd();
       log('a run is already active; ignore');
       return;
     }
+    _runStartPresetKey = getActivePresetKey();
+    let runOutcome = 'complete';
     runState.active = true;
     runState.type = 'full';
     runState.abortRequested = false;
@@ -205,9 +215,20 @@
         await autoExport('full-fetch-complete');
         setProgress({ message: 'Export complete — listings.json downloaded.' });
       }
+    } catch (e) {
+      runOutcome = 'error';
+      throw e;
     } finally {
       runState.active = false;
       emitRun();
+      // v0.7.17: persist a run-history entry regardless of outcome so the
+      // dashboard's "Recent runs" panel reflects aborted/errored runs too.
+      // Outcome inferred from runOutcome (set by catch) → abortRequested
+      // → fall-through.
+      let outcome = runOutcome;
+      if (outcome === 'complete' && runState.abortRequested) outcome = 'aborted';
+      if (outcome === 'complete' && runState.progress.phase === 'aborted') outcome = 'aborted';
+      recordRunHistory({ startedAtIso, startMs, type: 'full', outcome });
       dbg('run', `=== runFullFetch finished in ${runT()} (phase=${runState.progress.phase}, ` +
         `listings=${runState.progress.listingsAccumulated}, errors=${runState.progress.errors}) ===`);
       grpEnd(); // close 'run' group
@@ -215,7 +236,12 @@
   }
 
   async function runIncrementalFetch() {
+    // v0.7.17: capture wall-clock + preset before the active-run guard.
+    const startedAtIso = nowIso();
+    const startMs = Date.now();
     if (runState.active) { log('a run is already active'); return; }
+    _runStartPresetKey = getActivePresetKey();
+    let runOutcome = 'complete';
     runState.active = true;
     runState.type = 'incremental';
     runState.abortRequested = false;
@@ -395,9 +421,17 @@
         await autoExport('incremental-fetch-complete');
         setProgress({ message: 'Export complete — listings.json downloaded.' });
       }
+    } catch (e) {
+      runOutcome = 'error';
+      throw e;
     } finally {
       runState.active = false;
       emitRun();
+      // v0.7.17: persist a run-history entry regardless of outcome.
+      let outcome = runOutcome;
+      if (outcome === 'complete' && runState.abortRequested) outcome = 'aborted';
+      if (outcome === 'complete' && runState.progress.phase === 'aborted') outcome = 'aborted';
+      recordRunHistory({ startedAtIso, startMs, type: 'incremental', outcome });
     }
   }
 
