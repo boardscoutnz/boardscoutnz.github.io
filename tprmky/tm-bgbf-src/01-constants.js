@@ -2,8 +2,37 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.12';
+  const VERSION = '0.7.14';
   const LOG_PREFIX = '[bgbf]';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Anti-detection humanization (v0.7.14)
+  // ─────────────────────────────────────────────────────────────────────────
+  // Pools rotated per-request by 07-network.js fetchHtml() to avoid emitting
+  // an identical request fingerprint on every fetch. Mean delay across a run
+  // is preserved by 04-utilities.js politeSleep() — these pools only affect
+  // header shape, not timing. NZ-plausible Accept-Language values; trivially
+  // varied Accept values. Keep both pools small — wider pools would be more
+  // human but also more obviously enumerated.
+  const ACCEPT_LANGUAGE_POOL = [
+    'en-NZ,en;q=0.9',
+    'en-NZ,en-AU;q=0.9,en;q=0.8',
+    'en-AU,en-NZ;q=0.9,en;q=0.8',
+    'en-NZ,en-GB;q=0.9,en;q=0.8',
+    'en-NZ,en-US;q=0.8,en;q=0.7',
+  ];
+  const ACCEPT_HEADER_POOL = [
+    'text/html,application/xhtml+xml',
+    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  ];
+  // Long "human pause" frequency (1 in N requests). The pause is 3×–6× the
+  // normal mean, immediately offset by shortening the next 2–3 polite sleeps
+  // so the overall budget is unchanged. See politeSleep() in 04-utilities.js.
+  const HUMAN_PAUSE_FREQUENCY = 32;     // 1-in-32 (within the requested 25–40 band)
+  const HUMAN_PAUSE_MULT_MIN  = 3;
+  const HUMAN_PAUSE_MULT_MAX  = 6;
+  const HUMAN_PAUSE_COMPENSATION_REQUESTS = 3;  // spread the offset across the next N polite sleeps
 
   // Categories crawled by the bulk fetcher.
   //
@@ -41,7 +70,34 @@
   // AND on every post-process pass:
 
   const PURGE_TITLE_KEYWORDS = [
-    'Briarpatch', 'beer pong', 'rubik', 'rubiks', 'Any', 'buy now per game', 'Casino', 'punch', 'punching', 'Poker', 'Craps', 'Chair', 'noughts and crosses', 'Doll house', 'dollhouse', 'Deck Case', 'Billiards', 'jenga', 'Snooker', 'Subbuteo', 'Air Hockey', 'chess', 'jigsaw', 'mahjong', 'outdoor', 'vintage', 'backgammon', 'scrabble', 'cornhole', 'warhammer', 'wargaming', 'd&d', 'dnd', 'dungeons and dragons', 'dungeons & dragons', 'heroquest', 'pathfinder', 'cthulhu', 'q workshop', 'mtg', 'magic the gathering', 'yu-gi-oh', 'yugioh', 'keyforge', 'battletech', 'heroscape', 'unlock!', 'exit the game', 'escape room', 'exploding kittens', 'top trumps', 'tarot deck', 'tarot', 'polyhedral', 'dice set', 'dice set dice games', 'card binder', 'card shuffler', 'trading card', 'monopoly', 'cribbage', 'yahtzee', 'rummy', 'bingo', 'lottery', 'roulette', 'domino', 'connect 4', 'connect four', 'battleship', 'tic tac toe', 'tic-tac-toe', 'maze', 'spot it', 'memory', 'puzzle', 'puzzles', 'sticker book', 'trivia', 'uno', 'waddingtons', 'bicycle', 'humanity', 'children', 'kids', 'toddler', 'educational', 'alphabet', 'orchard', 'thinkfun', 'bigjigs', 'kosmos', 'haba', 'lego', 'plastic', 'magnetic', 'sensory', 'novelty', 'unicorns', 'corn hole', 'foosball', 'football', 'puck game', 'ring toss', 'bag toss', 'whack mole', 'throw throw', 'prize wheel', 'raffle', 'game table cloth', 'date night', 'drinking game', 'drinking games', 'drink', 'drunk', 'game set', 'high quality', 'professional', 'performance', 'interactive', 'interaction', 'sex', 'intimate', 'intimacy', 'labia', 'dick', 'f**k', 'f***', 'f***?', 'hitler', 'lube', 'penis', 'meme', 'playing cards', 'afx', 'ak interactive', 'ptn', 'mancala', 'checkers', 'Pokémon Card', 'Pokémon Cards', 'Pokemon Card', 'Pokemon Cards', 'Mahjongg', 'Mah jong', 'Mah Jongg', 'Strapless', 'Remote', 'Video Game', 'Toy', 'Pub game', 'Number Balls', 'Blowjob', 'Bulk Family', 'Bulk games', 'Bulk boardgames', 'Bulk board games', 'Bulk lot', 'Sudoku', 'Cards Against', 'Citadels', 'Cluedo', 'Cooked Aussies', 'D & D', 'Disney', 'Gambling', 'Wooden Toss', 'Building Block', 'Building Blocks', 'Fidget', '30ML', 'Bottle Opener', 'Bubblegum', 'Buzzed', 'Buzzer', 'Darts', 'Dartboard', 'Board Toy', 'Ass', 'Dumb', 'Whack A Mole', 'Curling', 'Shuffleboard', 'Bible', 'Guess Who', 'Guess Who?', 'Kitty', 'Handbag', 'Hungry Hippos', 'Jumanji', 'Projector', 'Mouse Trap', 'Pictionary', '1000 Piece', '1000 Pieces', '1000-Piece', '1000-Pieces', '1000Piece', '1000Pieces', 'Pressure Washer', 'Psycho Killer', 'Psycho Killer:', 'Healing Crystal', 'Ridley\'s', 'Ridleys', 'Ridley', 'RISK', 'Santa', 'Christmas', 'WASJIG', 'Shut The Box', 'Smart Games', 'SmartGames', 'Flash Card', 'Flash Cards', 'Chameleon', 'Walking Dead', 'Washers', 'Trail by Trolley', 'Twister', 'Vampire', 'Velcro', 'Unmatched', 'Thomas', 'Runequest', 'Brimstone', 'Pokémon', 'Harry Potter', 'Gloomhaven', 'Final Girl', 'TCG', 'LCG', 'Zombicide', 'Lord of the Rings', 'Axis & Allies', 'One Piece', 'Paw Patrol', 'Adult', 'Arkham Horror', 'Basketball', 'Beat That', 'Blue Opal', 'Bluey', 'Bop It', 'Blood on the Clocktower', 'xHaba', 'Dragon Shield', 'Card Holder', 'Card Holders', 'Card Sleeve', 'Card Sleeves', 'Dice Cup', 'Dice Cups', 'Dice Tray', 'Dice Trays', 'Tablecloth', 'Carry Case', 'Carry Cases', 'Game Dice', 'Citadel', 'Folded Space', 'Storage Container', 'Gamegenic', 'Kingshield', 'LPG', 'MDG', 'Monument Pro', 'Ultra Pro', 'Ultimate Guard', 'Cushion', 'Pillow', 'Tangram', 'Paddle Ball', 'Four in a Row', 'Quoits', 'Cricket', 'Brain Teaser', 'Pub Quiz', 'Balancing Game', 'Noughts & Crosses', 'Murder Mystery', 'Game Prop', 'Game Props', 'Melissa & Doug', 'Matching Game', 'Twerk', 'Colouring Book', 'Coloring Book', 'Oracle Deck', 'Fortune Telling', 'Iron Clays', 'Tumbling Tower', 'Dice Pack', 'Reversible', 'Snakes and Ladders', 'Snakes & Ladders', 'Cup Holders', 'Mathematics', 'Hot Wheels', 'Ten Pin Bowling', 'Newtons Cradle', 'Hedbanz', 'Conversation Cards', 'Dating Game', 'Dating Games', 'Dating Card', 'Dating Cards', 'Blank Dice', 'Wooden Dice', '500pcs', 'Per Pack', 'Premium Sleeves', '1pc', '2pc', '3pc', '4pc', '5pc', '6pc', '7pc', '8pc', '9pc', '10pc', '1pcs', '2pcs', '3pcs', '4pcs', '5pcs', '6pcs', '7pcs', '8pcs', '9pcs', '10pcs', '15pc', '15pcs', '20pc', '20pcs', '25pc', '25pcs', '50pc', '50pcs', '100pc', '100pcs', '200pc', '200pcs', '250pc', '250pcs', '500pc', '6 Nimmt!', 'Akumulate', 'Ping Pong', 'Photo Cards', 'Colorful Balls', 'Bachelorette', 'Microns', 'Waterproof', 'Stress Relief', 'Wooden Set', 'Magic Trick', 'Magical Trick', 'Road Trip', 'Crafts', 'Wooden Disc', 'Wooden Disk'
+    'Briarpatch', 'beer pong', 'rubik', 'rubiks', 'Any', 'buy now per game', 'Casino', 'punch', 'punching', 'Poker', 'Craps', 'Chair', 'noughts and crosses', 'Doll house', 'dollhouse', 'Deck Case', 'Billiards', 'jenga', 'Snooker', 'Subbuteo', 'Air Hockey', 'chess', 'jigsaw', 'mahjong', 'outdoor', 'vintage', 'backgammon', 'scrabble', 'cornhole', 'warhammer', 'wargaming', 'd&d', 'dnd', 'dungeons and dragons', 'dungeons & dragons', 'heroquest', 'pathfinder', 'cthulhu', 'q workshop', 'mtg', 'magic the gathering', 'yu-gi-oh', 'yugioh', 'keyforge', 'battletech', 'heroscape', 'unlock!', 'exit the game', 'escape room', 'exploding kittens', 'top trumps', 'tarot deck', 'tarot', 'polyhedral', 'dice set', 'dice set dice games', 'card binder', 'card shuffler', 'trading card', 'monopoly', 'cribbage', 'yahtzee', 'rummy', 'bingo', 'lottery', 'roulette', 'domino', 'connect 4', 'connect four', 'battleship', 'tic tac toe', 'tic-tac-toe', 'maze', 'spot it', 'memory', 'puzzle', 'puzzles', 'sticker book', 'trivia', 'uno', 'waddingtons', 'bicycle', 'humanity', 'children', 'kids', 'toddler', 'educational', 'alphabet', 'orchard', 'thinkfun', 'bigjigs', 'kosmos', 'haba', 'lego', 'plastic', 'magnetic', 'sensory', 'novelty', 'unicorns', 'corn hole', 'foosball', 'football', 'puck game', 'ring toss', 'bag toss', 'whack mole', 'throw throw', 'prize wheel', 'raffle', 'game table cloth', 'date night', 'drinking game', 'drinking games', 'drink', 'drunk', 'game set', 'high quality', 'professional', 'performance', 'interactive', 'interaction', 'sex', 'intimate', 'intimacy', 'labia', 'dick', 'f**k', 'f***', 'f***?', 'hitler', 'lube', 'penis', 'meme', 'playing cards', 'afx', 'ak interactive', 'ptn', 'mancala', 'checkers', 'Pokémon Card', 'Pokémon Cards', 'Pokemon Card', 'Pokemon Cards', 'Mahjongg', 'Mah jong', 'Mah Jongg', 'Strapless', 'Remote', 'Video Game', 'Toy', 'Pub game', 'Number Balls', 'Blowjob', 'Bulk Family', 'Bulk games', 'Bulk boardgames', 'Bulk board games', 'Bulk lot', 'Sudoku', 'Cards Against', 'Citadels', 'Cluedo', 'Cooked Aussies', 'D & D', 'Disney', 'Gambling', 'Wooden Toss', 'Building Block', 'Building Blocks', 'Fidget', '30ML', 'Bottle Opener', 'Bubblegum', 'Buzzed', 'Buzzer', 'Darts', 'Dartboard', 'Board Toy', 'Ass', 'Dumb', 'Whack A Mole', 'Curling', 'Shuffleboard', 'Bible', 'Guess Who', 'Guess Who?', 'Kitty', 'Handbag', 'Hungry Hippos', 'Jumanji', 'Projector', 'Mouse Trap', 'Pictionary', '1000 Piece', '1000 Pieces', '1000-Piece', '1000-Pieces', '1000Piece', '1000Pieces', 'Pressure Washer', 'Psycho Killer', 'Psycho Killer:', 'Healing Crystal', 'Ridley\'s', 'Ridleys', 'Ridley', 'RISK', 'Santa', 'Christmas', 'WASJIG', 'Shut The Box', 'Smart Games', 'SmartGames', 'Flash Card', 'Flash Cards', 'Chameleon', 'Walking Dead', 'Washers', 'Trail by Trolley', 'Twister', 'Vampire', 'Velcro', 'Unmatched', 'Thomas', 'Runequest', 'Brimstone', 'Pokémon', 'Harry Potter', 'Gloomhaven', 'Final Girl', 'TCG', 'LCG', 'Zombicide', 'Lord of the Rings', 'Axis & Allies', 'One Piece', 'Paw Patrol', 'Adult', 'Arkham Horror', 'Basketball', 'Beat That', 'Blue Opal', 'Bluey', 'Bop It', 'Blood on the Clocktower', 'xHaba', 'Dragon Shield', 'Card Holder', 'Card Holders', 'Card Sleeve', 'Card Sleeves', 'Dice Cup', 'Dice Cups', 'Dice Tray', 'Dice Trays', 'Tablecloth', 'Carry Case', 'Carry Cases', 'Game Dice', 'Citadel', 'Folded Space', 'Storage Container', 'Gamegenic', 'Kingshield', 'LPG', 'MDG', 'Monument Pro', 'Ultra Pro', 'Ultimate Guard', 'Cushion', 'Pillow', 'Tangram', 'Paddle Ball', 'Four in a Row', 'Quoits', 'Cricket', 'Brain Teaser', 'Pub Quiz', 'Balancing Game', 'Noughts & Crosses', 'Murder Mystery', 'Game Prop', 'Game Props', 'Melissa & Doug', 'Matching Game', 'Twerk', 'Colouring Book', 'Coloring Book', 'Oracle Deck', 'Fortune Telling', 'Iron Clays', 'Tumbling Tower', 'Dice Pack', 'Reversible', 'Snakes and Ladders', 'Snakes & Ladders',
+    // v0.7.14 added: "Snakes and Ladders" variants (Chutes/Shooters).
+    'Shooters and Ladders', 'Shooters & Ladders', 'Shooters + Ladders',
+    'Chutes and Ladders', 'Chutes & Ladders', 'Chutes + Ladders',
+    'Cup Holders', 'Mathematics', 'Hot Wheels', 'Ten Pin Bowling', 'Newtons Cradle', 'Hedbanz', 'Conversation Cards',
+    // v0.7.14 added: more conversation/dating-deck variants near
+    // existing "Conversation Cards".
+    'Conversation Starter', 'Conversation Starters', 'Couples Conversation',
+    'Dating Game', 'Dating Games', 'Dating Card', 'Dating Cards', 'Blank Dice', 'Wooden Dice', '500pcs', 'Per Pack', 'Premium Sleeves', '1pc', '2pc', '3pc', '4pc', '5pc', '6pc', '7pc', '8pc', '9pc', '10pc', '1pcs', '2pcs', '3pcs', '4pcs', '5pcs', '6pcs', '7pcs', '8pcs', '9pcs', '10pcs', '15pc', '15pcs', '20pc', '20pcs', '25pc', '25pcs', '50pc', '50pcs', '100pc', '100pcs', '200pc', '200pcs', '250pc', '250pcs', '500pc',
+    // v0.7.14 added: more bulk-quantity tokens alongside the existing Npc/Npcs sweep.
+    '100 Pcs', '12Pcs', '40pcs', '50 Pack',
+    '6 Nimmt!', 'Akumulate', 'Ping Pong', 'Photo Cards', 'Colorful Balls', 'Bachelorette', 'Microns', 'Waterproof', 'Stress Relief', 'Wooden Set', 'Magic Trick', 'Magical Trick', 'Road Trip', 'Crafts', 'Wooden Disc', 'Wooden Disk',
+    // v0.7.14 added: misc novelty / non-board-game listings that
+    // keep showing up in the corpus.
+    'Clue Board Game', 'Clue BoardGame',
+    'Pleasure',
+    'Crazy Caterpillar',
+    'Police Alert',
+    'Dodgeball',
+    'Rainbow Ball',
+    'House Props',
+    'Taboo',
+    'AFL', 'NRL',
+    '30 Seconds',
+    '5 Second Rule',
+    'LED',
+    'Fun Family Game',
+    'Playing Card', 'Playing Cards'
   ];
 
   // Build the blacklist regex from the keyword array. Entries are escaped
@@ -186,5 +242,8 @@
   // GM keys
   const GM_KEY_SETTINGS      = 'settings.v1';
   const GM_KEY_CURRENT_RUN   = 'currentRun.v1';
+  // v0.7.14: panel checkbox for the optional listings-example.json export.
+  // Stored as a plain boolean via GM_setValue/GM_getValue. Default false.
+  const GM_KEY_EXPORT_SAMPLE = 'exportSampleEnabled';
 
 // ============================================================================

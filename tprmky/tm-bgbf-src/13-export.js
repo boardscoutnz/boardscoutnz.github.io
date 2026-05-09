@@ -132,11 +132,16 @@
     // ---- Also emit listings-example.json (structural reference) ----
     // Same envelope as the full export, just a 160-listing cross-section
     // so the file shape stays current without git-committing the multi-MB
-    // full corpus. NOT wrapped in try/catch any more — if the sample build
-    // throws we want to see the stack, not a cryptic warning. The main
-    // listings.json is already safely on disk by this point regardless.
-    grp('sample', '--- emitting listings-example.json ---');
+    // full corpus. v0.7.14: gated behind the panel checkbox "Also export
+    // listings-example.json (sample)" — when unchecked, this whole block
+    // is skipped (no buildListingsSample call, no 1500ms gap sleep, no
+    // second downloadFile invocation). The full listings.json above is
+    // unconditional.
     let sampleEmitted = false;
+    if (!isExportSampleEnabled()) {
+      dbg('export', 'sample export disabled by panel checkbox — skipping listings-example.json');
+    } else {
+    grp('sample', '--- emitting listings-example.json ---');
     try {
       const sampleListings = buildListingsSample(listings);
       const sampleObj = {
@@ -176,8 +181,9 @@
     } finally {
       grpEnd(); // close 'sample' group
     }
+    }
 
-    log(`Exported ${listings.length} listings to ${filename} (${reason})${sampleEmitted ? ' + sample' : ' (sample failed)'}`);
+    log(`Exported ${listings.length} listings to ${filename} (${reason})${sampleEmitted ? ' + sample' : ''}`);
     const exportedAt = nowIso();
     await dbPut(STORE_META, { key: 'lastExportAt', value: exportedAt });
     try { localStorage.setItem('bgbf.lastExportAt', exportedAt); } catch (e) { /* ignore */ }
