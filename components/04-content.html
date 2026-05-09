@@ -1,0 +1,25 @@
+    <section class="content">
+
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-state-content">
+          <div class="empty-state-icon" aria-hidden="true">📦</div>
+          <h2>No data available</h2>
+          <p id="empty-state-message">The listings file couldn't be loaded from the repository. Please try refreshing the page.</p>
+        </div>
+      </div>
+
+      <div id="grid-container" hidden>
+        <div class="grid-hint" id="grid-hint" role="note">
+          <span class="hint-icon" aria-hidden="true">💡</span>
+          <span class="hint-body">
+            <strong>Sorting by multiple columns:</strong>
+            click any column header to sort by it.
+            Then hold <kbd>Shift</kbd> and click another column header to add it as a secondary sort.
+            Numbered badges (<span class="sort-priority-demo">1</span><span class="sort-priority-demo">2</span>) on each header show the active sort priority — the column you click first stays priority <span class="sort-priority-demo">1</span>; subsequent shift-clicks append as lower-priority tiebreakers.
+          </span>
+          <button id="dismiss-hint" class="hint-dismiss" title="Dismiss this tip" aria-label="Dismiss">×</button>
+        </div>
+        <div id="grid"></div>
+      </div>
+
+    </section>

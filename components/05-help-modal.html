@@ -1,0 +1,40 @@
+  <!-- About modal -->
+  <dialog id="help-modal">
+    <div class="modal-content">
+      <h2>About</h2>
+      <p>This is a personal browser tool. The data shown here is built from a
+      Trade Me board-game listings snapshot committed to the repository, joined
+      against a pre-built BoardGameGeek metadata cache so you can sort and
+      filter by BGG rank, rating, weight, player count, and playing time.</p>
+
+      <h3>Tips</h3>
+      <ul>
+        <li><strong>Multi-column sort:</strong> click a column to sort, hold
+          <kbd>Shift</kbd> and click another column to add it as a
+          lower-priority tiebreaker. The first column you click stays at
+          priority <span class="sort-priority-demo">1</span>; subsequent
+          shift-clicks become <span class="sort-priority-demo">2</span>,
+          <span class="sort-priority-demo">3</span>, etc. Numbered badges on
+          each header show the active sort priority.</li>
+        <li><strong>BGG link:</strong> click any matched game name in the
+          BGG column to open its BGG page in a new tab.</li>
+        <li><strong>Match status:</strong> the green check means a confident
+          BGG match; orange means uncertain (top candidates were close); blank
+          means no match could be made.</li>
+        <li><strong>Data freshness:</strong> the green pill in the top bar
+          shows when the listings snapshot was generated. It turns orange
+          after a week and red after a month.</li>
+        <li><strong>BGG columns hidden:</strong> the BGG-derived columns (BGG,
+          Rank, Rating, Weight, Players, Time) are currently hidden because
+          the BGG matching pipeline is still pending its API key. The
+          disabled "Show BGG columns" toolbar button will be enabled once
+          that work lands.</li>
+      </ul>
+
+      <p>Source: <a id="repo-link" href="#" target="_blank" rel="noopener noreferrer">GitHub repository</a></p>
+
+      <div class="modal-actions">
+        <button id="help-close" class="btn primary">Got it</button>
+      </div>
+    </div>
+  </dialog>

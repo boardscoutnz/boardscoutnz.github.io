@@ -1,0 +1,39 @@
+/* ==========================================================================
+   01-base.css — globals, reset, body typography, hidden-attr override
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ==========================================================================
+   Board Scout NZ — app.css
+   ========================================================================== */
+
+* { box-sizing: border-box; }
+
+/* The HTML `hidden` attribute defaults to `display: none` via the user-agent
+   stylesheet, but ANY explicit `display: ...` rule we set later wins, so
+   `<div class="empty-state" hidden>` would still render visibly because of
+   `.empty-state { display: flex; ... }`. This single rule restores the
+   intended behaviour: `hidden` always wins. Without this, the empty state
+   and the grid render simultaneously when both are layout-flex containers. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+               sans-serif;
+  font-size: 14px;
+  background: #f5f5f5;
+  color: #222;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.bold {
+  font-weight: bold;
+}

@@ -1,0 +1,41 @@
+  <header class="topbar">
+    <div class="title-block">
+      <img src="./img/logo.png" alt="" class="brand-logo" aria-hidden="true" />
+      <div class="title-text">
+        <h1>Board Scout NZ <span class="version" id="app-version">v1.0.0</span></h1>
+        <small class="creator-credit">by Gavin McGruddy</small>
+      </div>
+    </div>
+    <div class="mode-toggle" id="mode-toggle" role="tablist" aria-label="View mode">
+      <button id="btn-mode-boardgames" class="mode-toggle-btn active"
+              role="tab" aria-selected="true" type="button">Board Games</button>
+      <button id="btn-mode-expansions" class="mode-toggle-btn"
+              role="tab" aria-selected="false" type="button">Expansions</button>
+    </div>
+    <div class="topbar-stats" id="topbar-stats">
+      <span class="badge muted">no data loaded</span>
+    </div>
+    <div class="topbar-data-meta" id="topbar-data-meta" hidden>
+      <span class="data-updated-pill" id="data-updated-pill" title=""></span>
+    </div>
+    <div class="topbar-actions">
+      <!--
+        BGG-columns toggle. The BGG cache pipeline isn't wired up yet
+        (waiting on a BoardGameGeek API key), so the button is disabled
+        and a small "?" affordance carries the user-facing explanation.
+        Wired in app.js so it's a no-op while disabled but functional if
+        the disabled state is ever lifted.
+      -->
+      <span class="btn-with-info">
+        <button id="btn-show-bgg" class="btn primary" aria-pressed="true"
+                title="Toggle the BGG Rank and BGG Rating columns. Other BGG-derived columns (Weight, Players, Time) require the full BGG cache pipeline (pending API key).">
+          BGG Mode: ON
+        </button>
+        <span class="info-tip"
+              data-tip="BGG Mode adds two columns to the grid — BGG Rank and BGG Rating — pulled from the BGG rankings cache. Additional BGG columns (Weight, Players, Time) and the BGG-specific filters in the sidebar will become available once the full BoardGameGeek cache pipeline is wired up — pending API key.">?</span>
+      </span>
+      <button id="btn-export-filtered" class="btn" disabled title="Export the currently filtered rows as CSV">Export filtered CSV</button>
+      <button id="btn-clear-sort" class="btn" disabled title="Clear all column sorts">Clear sort</button>
+      <button id="btn-help" class="btn ghost" title="What is this?">?</button>
+    </div>
+  </header>

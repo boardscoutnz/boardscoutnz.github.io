@@ -1,0 +1,40 @@
+/* ==========================================================================
+   06-badges.css — generic .badge + NEW-listing red pill
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Badges ---------- */
+
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #ecf0f1;
+  color: #2c3e50;
+  white-space: nowrap;      /* NEW: stops "5,689 / visible / board / games" stacking inside the pill */
+}
+
+.badge.muted { background: #95a5a6; color: #fff; }
+/* ---------- NEW listing badge ----------
+ * Red pill prefixing the title for any listing flagged isNewListing
+ * by the userscript — i.e. one that appeared in the latest Quick Run
+ * but not in the previous one. Cleared automatically on the next
+ * Quick Run because the userscript explicitly sets isNewListing:false
+ * on listings it re-encounters. v1.6.13.
+ */
+.badge-new {
+  display: inline-block;
+  background: #c0392b;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  vertical-align: middle;
+  margin-right: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}

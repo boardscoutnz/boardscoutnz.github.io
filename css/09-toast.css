@@ -1,0 +1,22 @@
+/* ==========================================================================
+   09-toast.css — loading toast
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Toast ---------- */
+
+.toast {
+  position: fixed;
+  top: 64px;
+  right: 16px;
+  background: #2c3e50;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 9999;
+}
+.toast.error { background: #c0392b; }
+.toast.success { background: #27ae60; }

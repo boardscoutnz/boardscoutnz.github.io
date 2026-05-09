@@ -1,0 +1,163 @@
+/* ==========================================================================
+   02-topbar.css — topbar header, data-updated pill, mode toggle
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;          /* NEW: lets children wrap to a new row when narrow */
+  gap: 16px;
+  row-gap: 10px;            /* NEW: tighter gap when wrapped */
+  padding: 10px 16px;
+  background: #2c3e50;
+  color: #ecf0f1;
+  border-bottom: 1px solid #1a242f;
+  flex-shrink: 0;
+}
+
+.title-block {
+  display: flex;
+  align-items: center;     /* changed from `baseline` so the round logo aligns with the text vertically */
+  gap: 10px;
+}
+.brand-logo {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;       /* logo is already circular but this is belt-and-braces if it's ever swapped */
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #fff;         /* in case the PNG has transparency around the circle on dark topbar */
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.topbar h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;      /* NEW: keeps "Board Scout NZ" on one line */
+}
+
+/* Sub-stack inside the title block: title row + creator credit */
+.title-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.creator-credit {
+  font-size: 11px;
+  font-style: italic;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.2px;
+}
+
+.topbar h1 .sep { color: #95a5a6; }
+.version { font-size: 11px; font-weight: 400; color: #95a5a6; }
+
+.topbar-stats {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---------- Data updated pill (prominent) ----------
+ *
+ * This is the headline indicator of how fresh the snapshot is. It sits in
+ * the topbar and is deliberately styled to draw the eye — gradient
+ * background, drop shadow, calendar icon. Three colour states based on age:
+ *   default (fresh)  — green     (≤ 7 days)
+ *   .stale           — orange    (8 – 30 days)
+ *   .very-stale      — red       (> 30 days)
+ * Hovering shows the exact ISO timestamp in the tooltip.
+ */
+.topbar-data-meta {
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+}
+.data-updated-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #16a085 0%, #1abc9c 100%);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(22, 160, 133, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: help;
+  transition: transform 0.15s ease;
+}
+.data-updated-pill:hover {
+  transform: translateY(-1px);
+}
+.data-updated-pill::before {
+  content: "📅";
+  font-size: 16px;
+  line-height: 1;
+}
+.data-updated-pill.stale {
+  background: linear-gradient(135deg, #d35400 0%, #e67e22 100%);
+  box-shadow: 0 2px 8px rgba(211, 84, 0, 0.45);
+}
+.data-updated-pill.very-stale {
+  background: linear-gradient(135deg, #922b21 0%, #c0392b 100%);
+  box-shadow: 0 2px 8px rgba(192, 57, 43, 0.45);
+}
+
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;          /* NEW: action buttons wrap to a new row instead of overflowing */
+  gap: 6px;
+  align-items: center;
+}
+
+/* ---------- Mode toggle (Board Games ↔ Expansions) ----------
+ * Segmented-control styling sitting in the topbar between the brand and
+ * the stats badges. Mutually-exclusive: only one button is .active at a
+ * time. The active button is wired in JS — see wireToolbarControls in
+ * app.js. */
+.mode-toggle {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 22px;
+  padding: 3px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.mode-toggle-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #bdc3c7;
+  font: 600 12.5px/1 inherit;
+  letter-spacing: 0.3px;
+  padding: 7px 16px;
+  border-radius: 19px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+}
+.mode-toggle-btn:hover:not(.active) {
+  color: #ecf0f1;
+  background: rgba(255, 255, 255, 0.06);
+}
+.mode-toggle-btn.active {
+  background: #2980b9;
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.mode-toggle-btn:focus-visible {
+  outline: 2px solid #f1c40f;
+  outline-offset: 2px;
+}

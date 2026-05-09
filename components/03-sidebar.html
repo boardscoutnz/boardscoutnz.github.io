@@ -1,0 +1,59 @@
+    <aside class="sidebar" id="sidebar">
+
+      <div class="sidebar-section">
+        <button id="btn-toggle-new-only" class="btn" type="button"
+                aria-pressed="false"
+                title="Toggle showing only listings flagged as NEW (first seen during the most recent Quick Run)">
+          🆕 Show only NEW listings
+        </button>
+      </div>
+
+      <div class="sidebar-section">
+        <h3>Condition</h3>
+        <label><input type="checkbox" id="f-cond-new" checked /> New <span class="muted" id="ct-new"></span></label>
+        <label><input type="checkbox" id="f-cond-used" checked /> Used <span class="muted" id="ct-used"></span></label>
+      </div>
+
+      <div class="sidebar-section">
+        <h3>Search</h3>
+        <input type="text" id="f-search" placeholder="title…" />
+      </div>
+
+      <div class="sidebar-section">
+        <h3>Price (NZ$)</h3>
+        <div class="row">
+          <input type="number" id="f-pmin" placeholder="min" />
+          <input type="number" id="f-pmax" placeholder="max" />
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <h3>Region</h3>
+        <div id="f-region" class="multi-check"></div>
+      </div>
+
+      <div class="sidebar-section">
+        <h3>Sub-category</h3>
+        <div id="f-subcat" class="multi-check"></div>
+      </div>
+
+      <div class="sidebar-section" id="sidebar-bgg-section" hidden>
+        <h3>BGG <span class="muted" id="bgg-status-pill">not loaded</span></h3>
+        <label title="When ticked, hides listings whose game is ranked outside BGG's top 5,000 (or that couldn't be matched). Leave unticked to see every listing — unranked rows are still flagged with a red >5,000 pill in the BGG rank column.">
+          <input type="checkbox" id="f-hide-unranked" /> Hide unranked games <span class="muted" id="ct-unranked"></span>
+        </label>
+        <label>Max BGG rank <input type="number" id="f-bgg-rank" placeholder="any" min="1" /></label>
+        <label>Max weight <input type="number" id="f-bgg-weight" placeholder="any" min="0" max="5" step="0.1" /></label>
+        <label>Min rating <input type="number" id="f-bgg-rating" placeholder="any" min="1" max="10" step="0.1" /></label>
+        <label>Players (≥)
+          <input type="number" id="f-bgg-players" placeholder="any" min="1" max="20" />
+        </label>
+        <label>Max playtime (mins)
+          <input type="number" id="f-bgg-time" placeholder="any" min="1" />
+        </label>
+      </div>
+
+      <div class="sidebar-section">
+        <button id="btn-reset-filters" class="btn">Reset filters</button>
+      </div>
+    </aside>

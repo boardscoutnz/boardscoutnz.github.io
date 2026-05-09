@@ -1,0 +1,22 @@
+/* ==========================================================================
+   05-layout.css — .layout flex grid + .content area
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Layout ---------- */
+
+.layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+/* ---------- Content area ---------- */
+
+.content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}

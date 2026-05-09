@@ -1,0 +1,125 @@
+/* ==========================================================================
+   03-buttons.css — buttons + info-tip (the ? affordance with tooltip)
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  padding: 6px 12px;
+  border: 1px solid #95a5a6;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  color: #222;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: #ecf0f1; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.primary {
+  background: #2980b9;
+  color: #fff;
+  border-color: #2980b9;
+}
+.btn.primary:hover:not(:disabled) { background: #246993; }
+.btn.danger {
+  background: #e74c3c;
+  color: #fff;
+  border-color: #e74c3c;
+}
+.btn.ghost {
+  background: transparent;
+  color: #ecf0f1;
+  border-color: #7f8c8d;
+}
+.btn.ghost:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
+
+button.link {
+  background: none;
+  border: none;
+  color: #2980b9;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font: inherit;
+}
+button.link:hover { color: #1c5980; }
+
+/* ---------- Info-tip ("?" affordance with tooltip) ----------
+ * Used to attach an explanation to a button or label that wouldn't fit
+ * inline (most notably the disabled "Show BGG columns" topbar button).
+ * Pure CSS — no JS — using ::after for the bubble. Wrap a button and the
+ * tip in a <span class="btn-with-info"> so they hug each other.
+ *
+ * v1.6.0.
+ */
+.btn-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #95a5a6;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+  user-select: none;
+  font-family: inherit;
+  line-height: 1;
+}
+.info-tip:hover { background: #7f8c8d; }
+.info-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a242f;
+  color: #ecf0f1;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: normal;
+  width: max-content;
+  max-width: 280px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  z-index: 100;
+}
+.info-tip::before {
+  content: "";
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-bottom-color: #1a242f;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease;
+  z-index: 100;
+}
+.info-tip:hover::after,
+.info-tip:hover::before,
+.info-tip:focus::after,
+.info-tip:focus::before {
+  opacity: 1;
+  visibility: visible;
+}

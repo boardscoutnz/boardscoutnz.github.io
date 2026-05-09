@@ -1,0 +1,140 @@
+/* ==========================================================================
+   08-grid.css — grid container styling + grid cell formatters
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Grid container ---------- */
+
+#grid-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.grid-hint {
+  background: linear-gradient(180deg, #fff8e1 0%, #fdf2c2 100%);
+  border-bottom: 2px solid #f0c040;
+  padding: 12px 16px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: #5d4e1a;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.grid-hint .hint-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.grid-hint .hint-body {
+  flex: 1;
+}
+.grid-hint strong { color: #4a3d10; }
+.grid-hint kbd {
+  background: #fff;
+  border: 1px solid #d4a93f;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 1px 7px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: #4a3d10;
+}
+.grid-hint .sort-priority-demo {
+  display: inline-block;
+  background: #2980b9;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 8px;
+  margin: 0 1px;
+  vertical-align: middle;
+}
+.grid-hint .hint-dismiss {
+  background: transparent;
+  border: none;
+  color: #5d4e1a;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.grid-hint .hint-dismiss:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #2c3e50;
+}
+
+#grid {
+  flex: 1;
+  background: #fff;
+}
+
+/* ---------- Grid cell formatters ----------
+ * The `.reasons` sub-line that used to appear under each title (showing the
+ * classifier rationale like "branding-logo-present") was removed when the
+ * three-bucket classification (private / shop / ambiguous) was collapsed to
+ * two — the rationale is no longer relevant to the user. */
+
+.cell-title a {
+  color: #2980b9;
+  text-decoration: none;
+  font-weight: 500;
+}
+.cell-title a:hover { text-decoration: underline; }
+
+.cell-bgg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.cell-bgg a {
+  color: #2980b9;
+  text-decoration: none;
+}
+.cell-bgg a:hover { text-decoration: underline; }
+
+.match-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  text-align: center;
+  font-size: 10px;
+  line-height: 14px;
+  color: #fff;
+  font-weight: 700;
+  flex-shrink: 0;          /* v1.6.12: stay round when BGG name overflows the column. */
+}
+.match-icon.exact { background: #27ae60; }
+.match-icon.fuzzy { background: #2980b9; }
+.match-icon.uncertain { background: #f39c12; }
+.match-icon.none { background: #bdc3c7; }
+
+.condition-pill {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.condition-pill.new { background: #d4efdf; color: #1d6e3a; }
+.condition-pill.used { background: #fdebd0; color: #9a5b00; }
+
+.badge-unranked {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: #fadbd8;
+  color: #922b21;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border: 1px solid #f1948a;
+}

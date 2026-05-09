@@ -1,0 +1,44 @@
+/* ==========================================================================
+   07-empty-state.css — shown when listings.json is missing
+   Sliced from app.css. Edit this file directly; all CSS files in css/ are
+   auto-loaded into index.html in alphabetical order by components/build.sh.
+   ========================================================================== */
+
+/* ---------- Empty state ----------
+ * Shown when ./data/listings.json is missing or fails to load. There is no
+ * user-facing way to import data any more — the snapshot must be committed
+ * to the repo — so this is a friendly "nothing to see here yet" message
+ * rather than an actionable widget.
+ *
+ * The `[hidden] { display: none !important }` rule near the top of the file
+ * is what actually hides this when the JS sets `empty.hidden = true`.
+ * Without that override, the `display: flex` here would beat the `hidden`
+ * attribute. */
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  padding: 32px;
+}
+.empty-state-content {
+  text-align: center;
+  color: #7f8c8d;
+  max-width: 480px;
+}
+.empty-state-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  line-height: 1;
+}
+.empty-state h2 {
+  color: #34495e;
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.empty-state p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
