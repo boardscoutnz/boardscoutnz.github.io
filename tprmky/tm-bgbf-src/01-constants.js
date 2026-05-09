@@ -2,7 +2,7 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.16';
+  const VERSION = '0.7.17';
   const LOG_PREFIX = '[bgbf]';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -213,7 +213,25 @@
     '5 Second Rule',
     'LED',
     'Fun Family Game',
-    'Playing Card', 'Playing Cards'
+    'Playing Card', 'Playing Cards',
+    // v0.7.17: additional purge terms. Several are intentionally broad
+    // — see the PR notes for the broad-keyword risk list (Magic, Magical,
+    // Retro, Pickle, Unicorn, Christmas/Xmas, Golf, Soccer, Rugby,
+    // Volleyball, Mage, Bum, OC). The user has accepted those trade-offs.
+    '8 ball', '8 balls', 'gas burner', 'RPG', 'warcraft', 'atomsfear', 'real estate', 'Scattergories', 'Binding of Isaac', 'stratego', 'cockroach',
+    'realestate', 'Witcher', 'Funko', 'Fisher Price', 'Jenga', 'Latex', 'BCW', 'crochet',
+    'Spanish game', 'Spanish word', 'Eugy', 'Party Game', 'Sticky Ball', 'Bouncy Ball',
+    'Bouncy Balls', 'iPhone', 'Five Crown', 'Spinner Game', 'Heads & Tails',
+    'Dragonball Z', 'Getting Lost', '150pcs', 'Multiplication Game',
+    'Multiplication Board Game', 'Xmas', 'Christmas', 'Bible', 'Puck',
+    'Chutes and ladders', 'Pictureka', 'Pictureka!', 'DMS', 'Bridgestone', 'Bum', 'Poo',
+    'Funny Joke', 'OC', 'Pogo', 'Unicorn', 'Spelling Game', 'Spelling Games',
+    'Rummikub', 'Draughts', 'Power Rangers', 'Final Fantasy', 'Dragon Ball', 'dog Man',
+    'Bad People', 'Tsuro', 'Retro', 'Dad Joke', 'Dad Jokes', 'FIFA', 'Party Card',
+    'Party Cards', 'Magic', 'Magical', 'N64', 'Jitterbugs', 'Pickle', 'Soccer', 'Golf',
+    'Frisbee', 'Rugby', 'Mindware', '18+', 'Game of Life', 'Bayblades', 'Bayblade',
+    'Beyblades', 'Beyblade', 'Volleyball', 'Mage', 'Telestrations', 'D6', 'Munchkin',
+    'Binding of Isaac', 'My Little Pony', 'Deck Box'
   ];
 
   // Build the blacklist regex from the keyword array. Entries are escaped
@@ -365,5 +383,13 @@
   // PRESET_BALANCED / PRESET_SAFEST). Default 'fastest' so upgraders from
   // v0.7.14 see identical timing.
   const GM_KEY_CRAWL_SPEED_PRESET = 'crawlSpeedPreset';
+
+  // v0.7.17: persisted rolling history of completed runs. Each entry
+  // captures duration, start/end timestamps, run type (full vs
+  // incremental), the crawl-speed preset that was active at run start,
+  // listings count, and outcome. Used by the dashboard's "Recent runs"
+  // panel to build up a per-preset timing dataset over many sessions.
+  const GM_KEY_RUN_HISTORY = 'runHistory.v1';
+  const RUN_HISTORY_MAX = 50;
 
 // ============================================================================

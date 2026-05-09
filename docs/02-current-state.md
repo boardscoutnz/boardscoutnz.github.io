@@ -1,5 +1,5 @@
 
-## Current state (v1.6.19, userscript v0.7.12)
+## Current state (v1.6.21, userscript v0.7.17)
 
 BGG matching is **live and default-on**. The topbar "BGG Mode: ON" button
 toggles the three BGG-derived columns (Entry / Rank / Rating); a `redraw(true)`

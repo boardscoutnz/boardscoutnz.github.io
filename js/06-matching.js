@@ -8,9 +8,35 @@
 // 6. Title normalization & matching
 // ============================================================================
 
+// Pipeline order matters and is load-bearing:
+//   1. lowercase
+//   2. diacritic fold (NFD + combining-mark strip) — so "Orléans" and
+//      "Orleans" normalise identically. Pure ASCII titles are unaffected.
+//   3. APOSTROPHE_RX → '' — strip apostrophes WITHOUT inserting a space,
+//      so "It's" → "Its" matches the unapostrophised surface form. MUST
+//      run before PUNCT_RX (which replaces apostrophes with a space).
+//   4. PAREN_GENRE_RX → ' ' — drop "(Board Game)" / "(Card Game)" etc.
+//      MUST run before SENTINEL_REPLACEMENTS, otherwise "Root (Board
+//      Game)" would canonicalise to "root boardgame" and miss the BGG
+//      entry "Root". Bare (non-parenthesised) "Card Game" / "Board Game"
+//      are still handled by the sentinel rule below.
+//   5. PUNCT_RX / QTY_RX / YEAR_RX → ' '
+//   6. SENTINEL_REPLACEMENTS — must precede NOISE_TOKENS so the sentinels
+//      can fire before "edition" / "game" are stripped generically.
+//   7. NOISE_TOKENS strip
+//   8. MULTISP collapse + trim
 function normalizeTitle(s) {
   if (!s) return '';
   let n = String(s).toLowerCase();
+  // v1.6.21: diacritic fold so "Kutná" === "Kutna", "Pâtisserie" ===
+  // "Patisserie", "Orléans" === "Orleans".
+  n = n.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // v1.6.21: apostrophe-strip (no space) before PUNCT_RX would inject
+  // a space.
+  n = n.replace(APOSTROPHE_RX, '');
+  // v1.6.21: parenthetical genre markers stripped BEFORE the sentinel
+  // pass turns "board game" into "boardgame".
+  n = n.replace(PAREN_GENRE_RX, ' ');
   n = n.replace(PUNCT_RX, ' ');
   n = n.replace(QTY_RX, ' ');
   n = n.replace(YEAR_RX, ' ');
@@ -28,6 +54,40 @@ function normalizeTitle(s) {
   }
   n = n.replace(MULTISP, ' ').trim();
   return n;
+}
+
+// v1.6.21: many TM listings prepend or append the publisher name to the
+// game title ("Pandasaurus Games — FOO" / "FOO - Rio Grande Games").
+// We strip a single recognised publisher prefix and/or a single suffix
+// before normalisation, on the LISTING side only. BGG primary names
+// don't carry publishers, so the equivalent strip is not applied to the
+// cache build (see js/05-bgg-cache.js — it calls normalizeTitle directly).
+//
+// Behaviour:
+//   • Match case-insensitively against MATCH_PUBLISHER_NAMES.
+//   • Prefix: ^<NAME>( Games)?[\s\-:–—]+ → ''
+//   • Suffix: [\s\-:–—]+<NAME>( Games)?\s*$ → ''
+//   • At most ONE prefix and ONE suffix strip per call (no recursion).
+//   • If the result is empty/whitespace-only, return the ORIGINAL title.
+//
+// The displayed listing title in the grid is unaffected — this strip is
+// applied at match time only, inside matchTitle().
+const _PUB_NAMES_ALT = MATCH_PUBLISHER_NAMES
+  .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
+const _PUB_PREFIX_RX = new RegExp(
+  `^(?:${_PUB_NAMES_ALT})(?:\\s+games)?[\\s\\-:–—]+`, 'i'
+);
+const _PUB_SUFFIX_RX = new RegExp(
+  `[\\s\\-:–—]+(?:${_PUB_NAMES_ALT})(?:\\s+games)?\\s*$`, 'i'
+);
+function stripPublisherFromListing(title) {
+  if (!title) return title;
+  let out = String(title);
+  out = out.replace(_PUB_PREFIX_RX, '');
+  out = out.replace(_PUB_SUFFIX_RX, '');
+  if (!out.trim()) return title;
+  return out;
 }
 
 // v1.6.12: helper for the new in-order / position-aware Tier 2 logic.
@@ -128,7 +188,10 @@ function matchTitle(title) {
   if (!bgg.loaded) {
     return { bggId: null, confidence: 'none', score: null, candidates: [] };
   }
-  const n = normalizeTitle(title);
+  // v1.6.21: strip recognised publisher names from the listing side
+  // BEFORE normalising. Listing-only — BGG cache build calls
+  // normalizeTitle directly (see js/05-bgg-cache.js).
+  const n = normalizeTitle(stripPublisherFromListing(title));
   if (!n || n.length < 3) {
     return { bggId: null, confidence: 'none', score: null, candidates: [] };
   }

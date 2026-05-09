@@ -75,6 +75,7 @@ were sections 9, 10, 13 — those numbers are intentionally not reused).
 | `14-ui.js` | The Shadow-DOM control panel: `ensureUI()`, the four buttons (Quick Run / Full Fetch / Export / Clear DB), the status row, and all the inline CSS (kept inside the shadow root so it can't leak into or be overridden by the host page). The biggest non-orchestrator file. |
 | `15-menu.js` | `registerMenuCommands()` — the GM_registerMenuCommand entries that show up in Tampermonkey's userscript menu (the icon dropdown). The "🧹 Re-purge existing data" / "🗑 Clear all listings" / "🩺 Run fetch test" / etc. items. |
 | `16-init.js` | `init()` — the boot sequence: ensureUI → registerMenuCommands → openDb (async). Plus the `pageshow` (bfcache) and `load` (UI-host-missing recovery) handlers, and the `DOMContentLoaded`/already-loaded dispatch. |
+| `17-run-history.js` | Persisted run-history log (v0.7.17). `getRunHistory()` / `appendRunHistoryEntry()` / `clearRunHistory()` / `formatDurationLabel()` / `recordRunHistory()` / `renderRunHistory()`. The orchestrators call `recordRunHistory()` from each run's finally-block; the panel UI calls `renderRunHistory()` on open and on run-complete. Reads `_runStartPresetKey` (declared in 11-orchestrators.js) via the shared IIFE closure. |
 | `99-footer.js` | The IIFE closer `})();`. |
 
 ### Adding a new file

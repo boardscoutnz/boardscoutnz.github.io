@@ -128,6 +128,36 @@
     }
     #crawl-speed .ticks span { flex: 0 0 auto; }
     #crawl-speed .ticks span.active { color: var(--preset-color); font-weight: 700; }
+
+    /* v0.7.17: persistent run-history list. Compact rows so up to 10
+       entries fit without dominating the panel. Colour conventions
+       reuse the existing palette (green = complete, red = error/abort). */
+    #run-history { padding: 6px 4px; margin-bottom: 6px; border-top: 1px solid #eee; }
+    #run-history .rh-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    #run-history .rh-header strong { font-size: 12px; }
+    #run-history .rh-clear {
+      margin-left: auto; padding: 2px 6px; font-size: 11px;
+      border: 1px solid #ccc; background: #fff; border-radius: 3px; cursor: pointer; color: #666;
+    }
+    #run-history .rh-clear:hover { background: #f5f5f5; color: #c0392b; }
+    #run-history .rh-empty { font-size: 11px; color: #888; padding: 4px 0; }
+    #run-history table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    #run-history td { padding: 2px 4px; vertical-align: top; }
+    #run-history tr + tr td { border-top: 1px solid #f0f0f0; }
+    #run-history .rh-when { color: #666; white-space: nowrap; }
+    #run-history .rh-type {
+      display: inline-block; padding: 0 5px; border-radius: 8px;
+      font-size: 10px; font-weight: 700; color: #fff; background: #95a5a6;
+    }
+    #run-history .rh-type.full { background: #2980b9; }
+    #run-history .rh-type.quick { background: #27ae60; }
+    #run-history .rh-dur { font-weight: 600; color: #444; white-space: nowrap; }
+    #run-history .rh-preset { color: #888; font-size: 10px; }
+    #run-history .rh-listings { color: #444; text-align: right; }
+    #run-history .rh-outcome { text-align: center; width: 14px; }
+    #run-history .rh-outcome.ok { color: #27ae60; }
+    #run-history .rh-outcome.err { color: #c0392b; }
+    #run-history .rh-outcome.warn { color: #f39c12; }
   `;
 
   function ensureUI() {
@@ -198,6 +228,14 @@
             </label>
             <span class="info-tip" data-tip="When ticked, also auto-downloads listings-example.json (a 160-row balanced sample) at the end of every run. Useful for sharing the schema without dumping the whole corpus.">?</span>
           </section>
+          <section id="run-history">
+            <div class="rh-header">
+              <strong>Recent runs</strong>
+              <span class="info-tip" data-tip="Up to 10 most-recent completed runs. Each entry records duration, crawl-speed preset, listings count, and outcome — builds up a per-preset timing dataset across sessions.">?</span>
+              <button id="rh-clear" class="rh-clear" title="Clear run history">Clear</button>
+            </div>
+            <div id="rh-body"><div class="rh-empty">No runs recorded yet.</div></div>
+          </section>
           <footer>
             JSON auto-downloads at end of every run. Drop into the static web app to browse.
           </footer>
@@ -219,7 +257,7 @@
   function wirePanel() {
     $('#fab').addEventListener('click', () => {
       const p = $('#panel'); p.hidden = !p.hidden;
-      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); hydrateCrawlSpeedSlider(); }
+      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); hydrateCrawlSpeedSlider(); renderRunHistory(); }
     });
     const exportSampleEl = $('#opt-export-sample');
     if (exportSampleEl) {
@@ -239,6 +277,14 @@
       alert('All data cleared.');
     });
     $('#run-abort').addEventListener('click', abortRun);
+    const rhClear = $('#rh-clear');
+    if (rhClear) {
+      rhClear.addEventListener('click', () => {
+        if (!confirm('Clear all recent-run history? This cannot be undone.')) return;
+        clearRunHistory();
+        renderRunHistory();
+      });
+    }
     onRun(updateRunBar);
     refreshPanelStatus();
   }
@@ -442,5 +488,11 @@
     const pr = uiShadow.getElementById('run-progress');
     if (pr) pr.value = pct;
     refreshPanelStatus();
+    // v0.7.17: refresh the run-history rows whenever the run reaches a
+    // terminal phase, so the new entry shows up in the panel without
+    // requiring the user to close-and-reopen.
+    if (state.progress.phase === 'complete' || state.progress.phase === 'aborted') {
+      renderRunHistory();
+    }
   }
 

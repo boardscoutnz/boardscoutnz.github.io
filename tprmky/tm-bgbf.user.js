@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trade Me Board Games Bulk Fetcher (Collector)
 // @namespace    https://github.com/yourname/tm-bgbf
-// @version      0.7.16
+// @version      0.7.17
 // @description  Collect-only edition. Bulk-fetch live Card-game and selected Board-game listings from Trade Me, purge listings whose title matches the blacklist (accessory keywords now folded into the blacklist), tag expansions vs base games, flag freshly-seen listings, and AUTO-EXPORT a JSON file at the end of every run for the standalone web dashboard to consume.
 // @author       you
 // @match        https://www.trademe.co.nz/*
@@ -36,7 +36,7 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.16';
+  const VERSION = '0.7.17';
   const LOG_PREFIX = '[bgbf]';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -247,7 +247,25 @@
     '5 Second Rule',
     'LED',
     'Fun Family Game',
-    'Playing Card', 'Playing Cards'
+    'Playing Card', 'Playing Cards',
+    // v0.7.17: additional purge terms. Several are intentionally broad
+    // — see the PR notes for the broad-keyword risk list (Magic, Magical,
+    // Retro, Pickle, Unicorn, Christmas/Xmas, Golf, Soccer, Rugby,
+    // Volleyball, Mage, Bum, OC). The user has accepted those trade-offs.
+    '8 ball', '8 balls', 'gas burner', 'RPG', 'warcraft', 'atomsfear', 'real estate', 'Scattergories', 'Binding of Isaac', 'stratego', 'cockroach',
+    'realestate', 'Witcher', 'Funko', 'Fisher Price', 'Jenga', 'Latex', 'BCW', 'crochet',
+    'Spanish game', 'Spanish word', 'Eugy', 'Party Game', 'Sticky Ball', 'Bouncy Ball',
+    'Bouncy Balls', 'iPhone', 'Five Crown', 'Spinner Game', 'Heads & Tails',
+    'Dragonball Z', 'Getting Lost', '150pcs', 'Multiplication Game',
+    'Multiplication Board Game', 'Xmas', 'Christmas', 'Bible', 'Puck',
+    'Chutes and ladders', 'Pictureka', 'Pictureka!', 'DMS', 'Bridgestone', 'Bum', 'Poo',
+    'Funny Joke', 'OC', 'Pogo', 'Unicorn', 'Spelling Game', 'Spelling Games',
+    'Rummikub', 'Draughts', 'Power Rangers', 'Final Fantasy', 'Dragon Ball', 'dog Man',
+    'Bad People', 'Tsuro', 'Retro', 'Dad Joke', 'Dad Jokes', 'FIFA', 'Party Card',
+    'Party Cards', 'Magic', 'Magical', 'N64', 'Jitterbugs', 'Pickle', 'Soccer', 'Golf',
+    'Frisbee', 'Rugby', 'Mindware', '18+', 'Game of Life', 'Bayblades', 'Bayblade',
+    'Beyblades', 'Beyblade', 'Volleyball', 'Mage', 'Telestrations', 'D6', 'Munchkin',
+    'Binding of Isaac', 'My Little Pony', 'Deck Box'
   ];
 
   // Build the blacklist regex from the keyword array. Entries are escaped
@@ -399,6 +417,14 @@
   // PRESET_BALANCED / PRESET_SAFEST). Default 'fastest' so upgraders from
   // v0.7.14 see identical timing.
   const GM_KEY_CRAWL_SPEED_PRESET = 'crawlSpeedPreset';
+
+  // v0.7.17: persisted rolling history of completed runs. Each entry
+  // captures duration, start/end timestamps, run type (full vs
+  // incremental), the crawl-speed preset that was active at run start,
+  // listings count, and outcome. Used by the dashboard's "Recent runs"
+  // panel to build up a per-preset timing dataset over many sessions.
+  const GM_KEY_RUN_HISTORY = 'runHistory.v1';
+  const RUN_HISTORY_MAX = 50;
 
 // ============================================================================
   // 2. LOGGING
@@ -1172,15 +1198,25 @@
   function setProgress(p) { runState.progress = { ...runState.progress, ...p }; emitRun(); }
   function onRun(fn) { runState.listeners.add(fn); return () => runState.listeners.delete(fn); }
 
+  // v0.7.17: captured at run-start so a mid-run slider change doesn't
+  // misattribute the run in the history log. Read by recordRunHistory()
+  // in 17-run-history.js via the shared IIFE closure.
+  let _runStartPresetKey = null;
+
   async function runFullFetch(opts = {}) {
     grp('run', `=== runFullFetch starting === (opts: ${JSON.stringify(opts)})`);
     const runT = startTimer();
+    // v0.7.17: capture wall-clock + preset before the active-run guard.
+    const startedAtIso = nowIso();
+    const startMs = Date.now();
     if (runState.active) {
       dbgWarn('run', 'a run is already active; ignoring this call');
       grpEnd();
       log('a run is already active; ignore');
       return;
     }
+    _runStartPresetKey = getActivePresetKey();
+    let runOutcome = 'complete';
     runState.active = true;
     runState.type = 'full';
     runState.abortRequested = false;
@@ -1366,9 +1402,20 @@
         await autoExport('full-fetch-complete');
         setProgress({ message: 'Export complete — listings.json downloaded.' });
       }
+    } catch (e) {
+      runOutcome = 'error';
+      throw e;
     } finally {
       runState.active = false;
       emitRun();
+      // v0.7.17: persist a run-history entry regardless of outcome so the
+      // dashboard's "Recent runs" panel reflects aborted/errored runs too.
+      // Outcome inferred from runOutcome (set by catch) → abortRequested
+      // → fall-through.
+      let outcome = runOutcome;
+      if (outcome === 'complete' && runState.abortRequested) outcome = 'aborted';
+      if (outcome === 'complete' && runState.progress.phase === 'aborted') outcome = 'aborted';
+      recordRunHistory({ startedAtIso, startMs, type: 'full', outcome });
       dbg('run', `=== runFullFetch finished in ${runT()} (phase=${runState.progress.phase}, ` +
         `listings=${runState.progress.listingsAccumulated}, errors=${runState.progress.errors}) ===`);
       grpEnd(); // close 'run' group
@@ -1376,7 +1423,12 @@
   }
 
   async function runIncrementalFetch() {
+    // v0.7.17: capture wall-clock + preset before the active-run guard.
+    const startedAtIso = nowIso();
+    const startMs = Date.now();
     if (runState.active) { log('a run is already active'); return; }
+    _runStartPresetKey = getActivePresetKey();
+    let runOutcome = 'complete';
     runState.active = true;
     runState.type = 'incremental';
     runState.abortRequested = false;
@@ -1556,9 +1608,17 @@
         await autoExport('incremental-fetch-complete');
         setProgress({ message: 'Export complete — listings.json downloaded.' });
       }
+    } catch (e) {
+      runOutcome = 'error';
+      throw e;
     } finally {
       runState.active = false;
       emitRun();
+      // v0.7.17: persist a run-history entry regardless of outcome.
+      let outcome = runOutcome;
+      if (outcome === 'complete' && runState.abortRequested) outcome = 'aborted';
+      if (outcome === 'complete' && runState.progress.phase === 'aborted') outcome = 'aborted';
+      recordRunHistory({ startedAtIso, startMs, type: 'incremental', outcome });
     }
   }
 
@@ -2080,6 +2140,36 @@
     }
     #crawl-speed .ticks span { flex: 0 0 auto; }
     #crawl-speed .ticks span.active { color: var(--preset-color); font-weight: 700; }
+
+    /* v0.7.17: persistent run-history list. Compact rows so up to 10
+       entries fit without dominating the panel. Colour conventions
+       reuse the existing palette (green = complete, red = error/abort). */
+    #run-history { padding: 6px 4px; margin-bottom: 6px; border-top: 1px solid #eee; }
+    #run-history .rh-header { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    #run-history .rh-header strong { font-size: 12px; }
+    #run-history .rh-clear {
+      margin-left: auto; padding: 2px 6px; font-size: 11px;
+      border: 1px solid #ccc; background: #fff; border-radius: 3px; cursor: pointer; color: #666;
+    }
+    #run-history .rh-clear:hover { background: #f5f5f5; color: #c0392b; }
+    #run-history .rh-empty { font-size: 11px; color: #888; padding: 4px 0; }
+    #run-history table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    #run-history td { padding: 2px 4px; vertical-align: top; }
+    #run-history tr + tr td { border-top: 1px solid #f0f0f0; }
+    #run-history .rh-when { color: #666; white-space: nowrap; }
+    #run-history .rh-type {
+      display: inline-block; padding: 0 5px; border-radius: 8px;
+      font-size: 10px; font-weight: 700; color: #fff; background: #95a5a6;
+    }
+    #run-history .rh-type.full { background: #2980b9; }
+    #run-history .rh-type.quick { background: #27ae60; }
+    #run-history .rh-dur { font-weight: 600; color: #444; white-space: nowrap; }
+    #run-history .rh-preset { color: #888; font-size: 10px; }
+    #run-history .rh-listings { color: #444; text-align: right; }
+    #run-history .rh-outcome { text-align: center; width: 14px; }
+    #run-history .rh-outcome.ok { color: #27ae60; }
+    #run-history .rh-outcome.err { color: #c0392b; }
+    #run-history .rh-outcome.warn { color: #f39c12; }
   `;
 
   function ensureUI() {
@@ -2150,6 +2240,14 @@
             </label>
             <span class="info-tip" data-tip="When ticked, also auto-downloads listings-example.json (a 160-row balanced sample) at the end of every run. Useful for sharing the schema without dumping the whole corpus.">?</span>
           </section>
+          <section id="run-history">
+            <div class="rh-header">
+              <strong>Recent runs</strong>
+              <span class="info-tip" data-tip="Up to 10 most-recent completed runs. Each entry records duration, crawl-speed preset, listings count, and outcome — builds up a per-preset timing dataset across sessions.">?</span>
+              <button id="rh-clear" class="rh-clear" title="Clear run history">Clear</button>
+            </div>
+            <div id="rh-body"><div class="rh-empty">No runs recorded yet.</div></div>
+          </section>
           <footer>
             JSON auto-downloads at end of every run. Drop into the static web app to browse.
           </footer>
@@ -2171,7 +2269,7 @@
   function wirePanel() {
     $('#fab').addEventListener('click', () => {
       const p = $('#panel'); p.hidden = !p.hidden;
-      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); hydrateCrawlSpeedSlider(); }
+      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); hydrateCrawlSpeedSlider(); renderRunHistory(); }
     });
     const exportSampleEl = $('#opt-export-sample');
     if (exportSampleEl) {
@@ -2191,6 +2289,14 @@
       alert('All data cleared.');
     });
     $('#run-abort').addEventListener('click', abortRun);
+    const rhClear = $('#rh-clear');
+    if (rhClear) {
+      rhClear.addEventListener('click', () => {
+        if (!confirm('Clear all recent-run history? This cannot be undone.')) return;
+        clearRunHistory();
+        renderRunHistory();
+      });
+    }
     onRun(updateRunBar);
     refreshPanelStatus();
   }
@@ -2394,6 +2500,12 @@
     const pr = uiShadow.getElementById('run-progress');
     if (pr) pr.value = pct;
     refreshPanelStatus();
+    // v0.7.17: refresh the run-history rows whenever the run reaches a
+    // terminal phase, so the new entry shows up in the panel without
+    // requiring the user to close-and-reopen.
+    if (state.progress.phase === 'complete' || state.progress.phase === 'aborted') {
+      renderRunHistory();
+    }
   }
 
   // ============================================================================
@@ -2537,5 +2649,114 @@
       }
     } catch (e) { err('load-time UI check failed', e); }
   }, { once: true });
+  // ============================================================================
+  // 17. RUN HISTORY — persistent log of completed runs (v0.7.17)
+  // ============================================================================
+  //
+  // Persists a rolling window of run summaries (duration, start/end
+  // timestamps, type, crawl-speed preset, listings count, outcome) under
+  // GM_KEY_RUN_HISTORY. The orchestrators in 11-orchestrators.js call
+  // recordRunHistory() in the run-completion finally-block; the panel UI
+  // in 14-ui.js calls getRunHistory() / clearRunHistory() / renderRunHistory()
+  // for the "Recent runs" section.
+  //
+  // Cross-file binding: _runStartPresetKey is declared as a module-scope
+  // `let` in 11-orchestrators.js (which loads BEFORE this file, so the
+  // binding is initialised by the time recordRunHistory is invoked at
+  // runtime). recordRunHistory reads it via the shared IIFE closure.
+
+  function getRunHistory() {
+    try {
+      const raw = GM_getValue(GM_KEY_RUN_HISTORY, '[]');
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function appendRunHistoryEntry(entry) {
+    const arr = getRunHistory();
+    arr.push(entry);
+    while (arr.length > RUN_HISTORY_MAX) arr.shift();
+    GM_setValue(GM_KEY_RUN_HISTORY, JSON.stringify(arr));
+  }
+
+  function clearRunHistory() {
+    try { GM_setValue(GM_KEY_RUN_HISTORY, '[]'); } catch (e) { /* non-fatal */ }
+  }
+
+  function formatDurationLabel(ms) {
+    const m = Math.floor(ms / 60000);
+    const s = Math.round((ms % 60000) / 1000);
+    return m >= 1 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  function recordRunHistory({ startedAtIso, startMs, type, outcome }) {
+    try {
+      const completedAtIso = nowIso();
+      const durationMs = Date.now() - startMs;
+      const presetKey = _runStartPresetKey || getActivePresetKey();
+      const presetCfg = CRAWL_SPEED_PRESETS[presetKey] || {};
+      appendRunHistoryEntry({
+        startedAt: startedAtIso,
+        completedAt: completedAtIso,
+        type,
+        durationMs,
+        durationLabel: formatDurationLabel(durationMs),
+        crawlSpeedPreset: presetKey,
+        crawlSpeedLabel: presetCfg.label || presetKey,
+        listings: runState.progress.listingsAccumulated || 0,
+        outcome,
+      });
+    } catch (e) {
+      dbg('run', 'appendRunHistoryEntry failed (non-fatal):', e && e.message);
+    }
+  }
+
+  // Render the persisted run-history list (most recent first, capped at
+  // 10 rows for panel space). Invoked from 14-ui.js on panel open, after
+  // Clear, and on run-complete via updateRunBar(). The underlying list
+  // can grow up to RUN_HISTORY_MAX in GM-storage; we just truncate the
+  // visible slice.
+  function renderRunHistory() {
+    if (!uiShadow) return;
+    const body = uiShadow.getElementById('rh-body');
+    if (!body) return;
+    const all = getRunHistory();
+    if (!all.length) {
+      body.innerHTML = '<div class="rh-empty">No runs recorded yet.</div>';
+      return;
+    }
+    const recent = all.slice().reverse().slice(0, 10);
+    const fmtWhen = (iso) => {
+      try {
+        const d = new Date(iso);
+        const month = d.toLocaleString('en-NZ', { month: 'short' });
+        const day = d.getDate();
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${month} ${day}, ${hh}:${mm}`;
+      } catch (e) { return iso || ''; }
+    };
+    const outcomeIcon = (o) => o === 'complete' ? { icon: '✓', cls: 'ok' }
+                            : o === 'aborted'  ? { icon: '⚠', cls: 'warn' }
+                            : { icon: '✕', cls: 'err' };
+    const rows = recent.map((r) => {
+      const t = r.type === 'full' ? { label: 'Full',  cls: 'full'  }
+                                  : { label: 'Quick', cls: 'quick' };
+      const o = outcomeIcon(r.outcome);
+      const preset = escapeHtml(r.crawlSpeedLabel || r.crawlSpeedPreset || '—');
+      return `<tr>
+        <td class="rh-when">${escapeHtml(fmtWhen(r.startedAt))}</td>
+        <td><span class="rh-type ${t.cls}">${t.label}</span></td>
+        <td class="rh-dur">${escapeHtml(r.durationLabel || '')}</td>
+        <td class="rh-preset">${preset}</td>
+        <td class="rh-listings">${Number(r.listings || 0).toLocaleString()}</td>
+        <td class="rh-outcome ${o.cls}" title="${escapeHtml(r.outcome || '')}">${o.icon}</td>
+      </tr>`;
+    }).join('');
+    body.innerHTML = `<table>${rows}</table>`;
+  }
 
 })();
