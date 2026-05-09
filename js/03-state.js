@@ -111,6 +111,7 @@ const filters = {
   bggMaxRank: null,
   bggMaxWeight: null,
   bggMinRating: null,
+  bggMaxRating: null,
   bggMinPlayers: null,
   bggMaxTime: null,
 };
@@ -131,6 +132,7 @@ function filtersSnapshot() {
     bggMaxRank:      filters.bggMaxRank,
     bggMaxWeight:    filters.bggMaxWeight,
     bggMinRating:    filters.bggMinRating,
+    bggMaxRating:    filters.bggMaxRating,
     bggMinPlayers:   filters.bggMinPlayers,
     bggMaxTime:      filters.bggMaxTime,
   };
@@ -167,7 +169,9 @@ if (typeof window !== 'undefined') {
       }
       const norm = normalizeTitle(title);
       const tokens = norm ? norm.split(' ').filter((t) => t.length > 0) : [];
-      const tokenSet = new Set(tokens);
+      // v1.6.20: mirror multi-set containment used by matchTitle().
+      const tokenCounts = new Map();
+      for (const t of tokens) tokenCounts.set(t, (tokenCounts.get(t) || 0) + 1);
       console.group(`[bsnz] matchTrace("${title}")`);
       console.log('normalised:', JSON.stringify(norm));
       console.log('tokens:', tokens);
@@ -183,7 +187,14 @@ if (typeof window !== 'undefined') {
         for (const i of seen) {
           const e = bgg.nameEntries[i];
           if (e.tokens.length < 2 || e.tokens.length > tokens.length) continue;
-          if (!e.tokens.every((t) => tokenSet.has(t))) continue;
+          const used = new Map();
+          let ok = true;
+          for (const t of e.tokens) {
+            const u = (used.get(t) || 0) + 1;
+            if (u > (tokenCounts.get(t) || 0)) { ok = false; break; }
+            used.set(t, u);
+          }
+          if (!ok) continue;
           candidates.push({
             id: e.id,
             primaryName: bgg.byId.get(e.id)?.primaryName || '(?)',

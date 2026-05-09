@@ -34,6 +34,97 @@
   <link rel="stylesheet" href="./css/02-topbar.css" />
   <link rel="stylesheet" href="./css/03-buttons.css" />
   <link rel="stylesheet" href="./css/04-sidebar.css" />
+  <link rel="stylesheet" href="./css/04a-rating-slider.css" />
+  <link rel="stylesheet" href="./css/05-layout.css" />
+  <link rel="stylesheet" href="./css/06-badges.css" />
+  <link rel="stylesheet" href="./css/07-empty-state.css" />
+  <link rel="stylesheet" href="./css/08-grid.css" />
+  <link rel="stylesheet" href="./css/09-toast.css" />
+  <link rel="stylesheet" href="./css/10-help-modal.css" />
+  <link rel="stylesheet" href="./css/11-tabulator.css" />
+  <link rel="stylesheet" href="./css/12-responsive.css" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="title-block">
+      <img src="./img/logo.png" alt="" class="brand-logo" aria-hidden="true" />
+      <div class="title-text">
+        <h1>Board Scout NZ <span class="version" id="app-version">v1.0.0</span></h1>
+        <small class="creator-credit">by Gavin McGruddy</small>
+      </div>
+    </div>
+    <div class="mode-toggle" id="mode-toggle" role="tablist" aria-label="View mode">
+      <button id="btn-mode-boardgames" class="mode-toggle-btn active"
+              role="tab" aria-selected="true" type="button">Board Games</button>
+      <button id="btn-mode-expansions" class="mode-toggle-btn"
+              role="tab" aria-selected="false" type="button">Expansions</button>
+    </div>
+    <div class="topbar-stats" id="topbar-stats">
+      <span class="badge muted">no data loaded</span>
+    </div>
+    <div class="topbar-data-meta" id="topbar-data-meta" hidden>
+      <span class="data-updated-pill" id="data-updated-pill" title=""></span>
+    </div>
+    <div class="topbar-actions">
+      <!--
+        BGG-columns toggle. The BGG cache pipeline isn't wired up yet
+        (waiting on a BoardGameGeek API key), so the button is disabled
+        and a small "?" affordance carries the user-facing explanation.
+        Wired in app.js so it's a no-op while disabled but functional if
+        the disabled state is ever lifted.
+      -->
+      <span class="btn-with-info">
+        <button id="btn-show-bgg" class="btn primary" aria-pressed="true"
+                title="Toggle the BGG Rank and BGG Rating columns. Other BGG-derived columns (Weight, Players, Time) require the full BGG cache pipeline (pending API key).">
+          BGG Mode: ON
+        </button>
+        <span class="info-tip"
+              data-tip="BGG Mode adds two columns to the grid — BGG Rank and BGG Rating — pulled from the BGG rankings cache. Additional BGG columns (Weight, Players, Time) and the BGG-specific filters in the sidebar will become available once the full BoardGameGeek cache pipeline is wired up — pending API key.">?</span>
+      </span>
+      <button id="btn-export-filtered" class="btn" disabled title="Export the currently filtered rows as CSV">Export filtered CSV</button>
+      <button id="btn-clear-sort" class="btn" disabled title="Clear all column sorts">Clear sort</button>
+      <button id="btn-help" class="btn ghost" title="What is this?">?</button>
+    </div>
+  </header>
+  <main class="layout">
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-LJS3M8NR0Y"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+
+    gtag('config', 'G-LJS3M8NR0Y');
+  </script>
+
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Board Scout NZ</title>
+  <meta name="description" content="Browse Trade Me board game listings enriched with BoardGameGeek data." />
+  <meta name="author" content="Gavin McGruddy" />
+  <!-- Tabulator: data grid with virtualization, multi-column sort, header filters -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator.min.css"
+  />
+
+  <!-- Favicons  -->
+  <link rel="icon" type="image/x-icon" href="./img/icons/favicon.ico" />
+  <link rel="icon" type="image/png" sizes="16x16" href="./img/icons/favicon-16x16.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./img/icons/favicon-32x32.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./img/icons/apple-touch-icon.png" />
+  <link rel="manifest" href="./site.webmanifest" />
+  <meta name="theme-color" content="#2c3e50" />
+  <!-- Local stylesheets (auto-generated from css/*.css) -->
+  <link rel="stylesheet" href="./css/01-base.css" />
+  <link rel="stylesheet" href="./css/02-topbar.css" />
+  <link rel="stylesheet" href="./css/03-buttons.css" />
+  <link rel="stylesheet" href="./css/04-sidebar.css" />
   <link rel="stylesheet" href="./css/05-layout.css" />
   <link rel="stylesheet" href="./css/06-badges.css" />
   <link rel="stylesheet" href="./css/07-empty-state.css" />
@@ -115,6 +206,20 @@
           <input type="number" id="f-pmin" placeholder="min" />
           <input type="number" id="f-pmax" placeholder="max" />
         </div>
+      </div>
+
+      <div class="sidebar-section" id="rating-slider-section">
+        <h3>BGG Rating</h3>
+        <div class="rating-slider-row">
+          <span class="rating-value" id="rating-min-value">0.0</span>
+          <span class="rating-value" id="rating-max-value">10.0</span>
+        </div>
+        <div class="rating-slider-track" id="rating-slider-track">
+          <div class="rating-slider-fill" id="rating-slider-fill"></div>
+          <input type="range" id="rating-slider-min" min="0" max="10" step="0.1" value="0" />
+          <input type="range" id="rating-slider-max" min="0" max="10" step="0.1" value="10" />
+        </div>
+        <button type="button" class="rating-slider-reset" id="rating-slider-reset" title="Reset rating range">Reset range</button>
       </div>
 
       <div class="sidebar-section">
@@ -239,6 +344,102 @@
   <script src="./js/13-toolbar.js" defer></script>
   <script src="./js/14-help.js" defer></script>
   <script src="./js/15-utils.js" defer></script>
+  <script src="./js/app.js" defer></script>
+</body>
+</html>
+    <section class="content">
+
+      <div id="empty-state" class="empty-state" hidden>
+        <div class="empty-state-content">
+          <div class="empty-state-icon" aria-hidden="true">📦</div>
+          <h2>No data available</h2>
+          <p id="empty-state-message">The listings file couldn't be loaded from the repository. Please try refreshing the page.</p>
+        </div>
+      </div>
+
+      <div id="grid-container" hidden>
+        <div class="grid-hint" id="grid-hint" role="note">
+          <span class="hint-icon" aria-hidden="true">💡</span>
+          <span class="hint-body">
+            <strong>Sorting by multiple columns:</strong>
+            click any column header to sort by it.
+            Then hold <kbd>Shift</kbd> and click another column header to add it as a secondary sort.
+            Numbered badges (<span class="sort-priority-demo">1</span><span class="sort-priority-demo">2</span>) on each header show the active sort priority — the column you click first stays priority <span class="sort-priority-demo">1</span>; subsequent shift-clicks append as lower-priority tiebreakers.
+          </span>
+          <button id="dismiss-hint" class="hint-dismiss" title="Dismiss this tip" aria-label="Dismiss">×</button>
+        </div>
+        <div id="grid"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- About modal -->
+  <dialog id="help-modal">
+    <div class="modal-content">
+      <h2>About</h2>
+      <p>This is a personal browser tool. The data shown here is built from a
+      Trade Me board-game listings snapshot committed to the repository, joined
+      against a pre-built BoardGameGeek metadata cache so you can sort and
+      filter by BGG rank, rating, weight, player count, and playing time.</p>
+
+      <h3>Tips</h3>
+      <ul>
+        <li><strong>Multi-column sort:</strong> click a column to sort, hold
+          <kbd>Shift</kbd> and click another column to add it as a
+          lower-priority tiebreaker. The first column you click stays at
+          priority <span class="sort-priority-demo">1</span>; subsequent
+          shift-clicks become <span class="sort-priority-demo">2</span>,
+          <span class="sort-priority-demo">3</span>, etc. Numbered badges on
+          each header show the active sort priority.</li>
+        <li><strong>BGG link:</strong> click any matched game name in the
+          BGG column to open its BGG page in a new tab.</li>
+        <li><strong>Match status:</strong> the green check means a confident
+          BGG match; orange means uncertain (top candidates were close); blank
+          means no match could be made.</li>
+        <li><strong>Data freshness:</strong> the green pill in the top bar
+          shows when the listings snapshot was generated. It turns orange
+          after a week and red after a month.</li>
+        <li><strong>BGG columns hidden:</strong> the BGG-derived columns (BGG,
+          Rank, Rating, Weight, Players, Time) are currently hidden because
+          the BGG matching pipeline is still pending its API key. The
+          disabled "Show BGG columns" toolbar button will be enabled once
+          that work lands.</li>
+      </ul>
+
+      <p>Source: <a id="repo-link" href="#" target="_blank" rel="noopener noreferrer">GitHub repository</a></p>
+
+      <div class="modal-actions">
+        <button id="help-close" class="btn primary">Got it</button>
+      </div>
+    </div>
+  </dialog>
+  <!-- Loading toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- 3rd-party libraries from CDN. Tabulator powers the grid; Fuse drives
+       fuzzy BGG title matching. Papa Parse is no longer needed — CSV import
+       was removed when the dropzone was retired. -->
+  <script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js"></script>
+
+  <!-- App scripts (auto-generated from js/*.js, app.js loaded last) -->
+  <script src="./js/01-debug.js" defer></script>
+  <script src="./js/02-config.js" defer></script>
+  <script src="./js/03-state.js" defer></script>
+  <script src="./js/04-bootstrap.js" defer></script>
+  <script src="./js/05-bgg-cache.js" defer></script>
+  <script src="./js/06-matching.js" defer></script>
+  <script src="./js/07-ingestion.js" defer></script>
+  <script src="./js/08-data-pill.js" defer></script>
+  <script src="./js/09-grid.js" defer></script>
+  <script src="./js/10-sort.js" defer></script>
+  <script src="./js/11-sort-badges.js" defer></script>
+  <script src="./js/12-filters.js" defer></script>
+  <script src="./js/13-toolbar.js" defer></script>
+  <script src="./js/14-help.js" defer></script>
+  <script src="./js/15-utils.js" defer></script>
+  <script src="./js/16-rating-slider.js" defer></script>
   <script src="./js/app.js" defer></script>
 </body>
 </html>

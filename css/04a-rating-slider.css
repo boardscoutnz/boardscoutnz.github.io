@@ -1,0 +1,152 @@
+/* ==========================================================================
+   04a-rating-slider.css — dual-handle BGG rating slider sidebar control
+   v1.6.20. Loaded immediately after 04-sidebar.css so the slider section
+   inherits sidebar typography and spacing, then overrides where needed.
+   The 04a- prefix is intentional — it slots between 04-sidebar.css and
+   05-layout.css in the alphabetical glob without renumbering downstream
+   files.
+   ========================================================================== */
+
+#rating-slider-section .rating-slider-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 6px;
+}
+
+#rating-slider-section .rating-value {
+  color: #2c3e50;
+  font-weight: 600;
+}
+
+#rating-slider-section .rating-slider-track {
+  position: relative;
+  height: 24px;
+  margin: 4px 0 8px;
+}
+
+/* Visible track bar behind the handles. */
+#rating-slider-section .rating-slider-track::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4px;
+  background: #ecf0f1;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Highlighted segment between the two handles. JS sets the two CSS
+   variables; defaults cover the full range until JS runs. */
+#rating-slider-section .rating-slider-fill {
+  --rating-slider-fill-left: 0%;
+  --rating-slider-fill-width: 100%;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  left: var(--rating-slider-fill-left);
+  width: var(--rating-slider-fill-width);
+  height: 4px;
+  background: #2c3e50;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* Both range inputs overlap the same track. They sit on top of the bar
+   and fill so their thumbs are clickable, but their own track is hidden. */
+#rating-slider-section input[type="range"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: none;
+}
+
+#rating-slider-section input[type="range"]::-webkit-slider-runnable-track {
+  height: 24px;
+  background: transparent;
+  border: none;
+}
+#rating-slider-section input[type="range"]::-moz-range-track {
+  height: 24px;
+  background: transparent;
+  border: none;
+}
+
+#rating-slider-section input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #2c3e50;
+  cursor: pointer;
+  margin-top: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+#rating-slider-section input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #2c3e50;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+#rating-slider-section input[type="range"]:focus {
+  outline: none;
+}
+#rating-slider-section input[type="range"]:focus::-webkit-slider-thumb {
+  border-color: #1a242f;
+  box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.2);
+}
+#rating-slider-section input[type="range"]:focus::-moz-range-thumb {
+  border-color: #1a242f;
+  box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.2);
+}
+
+/* The min handle is z-stacked under the max handle so that when both are
+   pinned at 10 the max thumb stays clickable. We swap when the min handle
+   nears the high end via :hover for ergonomics. */
+#rating-slider-section #rating-slider-min { z-index: 1; }
+#rating-slider-section #rating-slider-max { z-index: 2; }
+
+/* Locked state: dim thumbs while applyFilters is mid-flight. */
+#rating-slider-section .rating-slider-track.is-locked input[type="range"]::-webkit-slider-thumb {
+  opacity: 0.5;
+  cursor: progress;
+}
+#rating-slider-section .rating-slider-track.is-locked input[type="range"]::-moz-range-thumb {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+#rating-slider-section .rating-slider-reset {
+  display: inline-block;
+  font-size: 11px;
+  color: #7f8c8d;
+  background: transparent;
+  border: 1px solid #bdc3c7;
+  border-radius: 3px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+#rating-slider-section .rating-slider-reset:hover {
+  color: #2c3e50;
+  border-color: #95a5a6;
+}

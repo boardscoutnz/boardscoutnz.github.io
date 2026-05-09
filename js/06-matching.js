@@ -73,6 +73,11 @@ function findPositionInListing(bggTokens, listingTokens) {
     }
     if (firstPos === -1) firstPos = pos;
     lastPos = pos;
+    // v1.6.20: pos++ here advances PAST the matched index, so two
+    // consecutive identical BGG tokens (e.g. ["hop","hop"]) correctly
+    // consume two distinct listing positions rather than re-matching
+    // the same one. This is equivalent to `pos = idx + 1` and is safe
+    // under the new multi-set containment semantics.
     pos++;
   }
   const contiguous = (lastPos - firstPos + 1) === bggTokens.length;
@@ -155,7 +160,15 @@ function matchTitle(title) {
   const listingTokens = n.split(' ').filter((t) => t.length > 0);
   let candidatePoolSize = 0;
   if (listingTokens.length >= 1) {
+    // v1.6.20: multi-set (bag) containment. Previously we used a Set,
+    // which let "Hop! Hop! Hop!" match "Pop n Hop" because every BGG
+    // "hop" found the listing's single "hop". Now each BGG token
+    // INSTANCE must be matched by a distinct listing-token instance.
     const listingTokenSet = new Set(listingTokens);
+    const listingTokenCounts = new Map();
+    for (const t of listingTokens) {
+      listingTokenCounts.set(t, (listingTokenCounts.get(t) || 0) + 1);
+    }
 
     const candidateIdxs = new Set();
     for (const t of listingTokens) {
@@ -190,12 +203,20 @@ function matchTitle(title) {
         continue;
       }
 
-      // Multi-token branch: every BGG token must appear somewhere
-      // in the listing.
+      // Multi-token branch: every BGG token INSTANCE must be matched
+      // by a distinct listing-token instance (multi-set containment).
+      // v1.6.20: a per-entry usedSoFar Map tracks how many copies of
+      // each token we've already consumed; we fail as soon as demand
+      // exceeds supply. (Set semantics let "Hop! Hop! Hop!" match
+      // "Pop n Hop"; bag semantics correctly reject it.)
       if (entry.tokens.length > listingTokens.length) continue;
       let allPresent = true;
+      const usedSoFar = new Map();
       for (const t of entry.tokens) {
-        if (!listingTokenSet.has(t)) { allPresent = false; break; }
+        const available = listingTokenCounts.get(t) || 0;
+        const used = usedSoFar.get(t) || 0;
+        if (used + 1 > available) { allPresent = false; break; }
+        usedSoFar.set(t, used + 1);
       }
       if (!allPresent) continue;
 

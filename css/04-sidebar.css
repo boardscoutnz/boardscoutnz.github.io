@@ -6,21 +6,38 @@
 
 /* ---------- "Show only NEW" toggle (sidebar) ----------
  * Full-width sidebar button that filters the grid to listings flagged
- * isNewListing=true. Inactive = neutral grey; active = red to match the
- * inline NEW pills on the title cells. v1.6.19. */
+ * isNewListing=true. v1.6.20: colour mapping flipped — INACTIVE
+ * ("NEW Listings only") is red to telegraph the high-attention default
+ * action, ACTIVE ("Show ALL Listings") is green to telegraph the
+ * "filter relaxed, all listings shown" state.
+ *
+ * NOTE: the active (green) state DELIBERATELY keeps the red-tinted
+ * box-shadow rgba(192, 57, 43, 0.35). It is not a bug and should not
+ * be "fixed" to a green-tinted rgba — the red shadow visually links
+ * the active state back to the NEW-pill colour family on the title
+ * cells. */
 #btn-toggle-new-only {
   width: 100%;
   font-weight: 600;
   text-align: center;
-}
-#btn-toggle-new-only.active {
   background: #c0392b;
   color: #fff;
   border-color: #c0392b;
   box-shadow: 0 1px 3px rgba(192, 57, 43, 0.35);
 }
-#btn-toggle-new-only.active:hover {
+#btn-toggle-new-only:hover:not(.active) {
   background: #a93226;
+  border-color: #a93226;
+}
+#btn-toggle-new-only.active {
+  background: #09b17d;
+  color: #fff;
+  border-color: #09b17d;
+  box-shadow: 0 1px 3px rgba(192, 57, 43, 0.35);
+}
+#btn-toggle-new-only.active:hover {
+  background: #079070;
+  border-color: #079070;
 }
 .sidebar {
   width: 260px;

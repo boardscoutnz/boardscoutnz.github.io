@@ -117,6 +117,20 @@
         </div>
       </div>
 
+      <div class="sidebar-section" id="rating-slider-section">
+        <h3>BGG Rating</h3>
+        <div class="rating-slider-row">
+          <span class="rating-value" id="rating-min-value">0.0</span>
+          <span class="rating-value" id="rating-max-value">10.0</span>
+        </div>
+        <div class="rating-slider-track" id="rating-slider-track">
+          <div class="rating-slider-fill" id="rating-slider-fill"></div>
+          <input type="range" id="rating-slider-min" min="0" max="10" step="0.1" value="0" />
+          <input type="range" id="rating-slider-max" min="0" max="10" step="0.1" value="10" />
+        </div>
+        <button type="button" class="rating-slider-reset" id="rating-slider-reset" title="Reset rating range">Reset range</button>
+      </div>
+
       <div class="sidebar-section">
         <h3>Region</h3>
         <div id="f-region" class="multi-check"></div>

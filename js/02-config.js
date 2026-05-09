@@ -7,7 +7,7 @@
 // 2. Configuration
 // ============================================================================
 
-const APP_VERSION = '1.6.18';
+const APP_VERSION = '1.6.20';
 const BGG_RANKINGS_URL = './data/bgg-rankings.json';
 const LISTINGS_URL  = './data/listings.json';
 
