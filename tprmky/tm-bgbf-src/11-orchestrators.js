@@ -143,17 +143,6 @@
               await dbBulkPut(STORE_LISTINGS, merged);
               dbg('run', `${passLabel} p${page}: dbBulkPut ${merged.length} listings resolved`);
 
-              // v0.7.8: feed the per-pass scrape set + running tail
-              // sentinel for the next Quick Run's expiration baseline.
-              // Mirrors lines ~1217-1226 of runIncrementalFetch.
-              const pk = passKeyOf(sc, cond);
-              if (!currSeenByPass[pk]) currSeenByPass[pk] = new Set();
-              for (const m of merged) {
-                currSeenByPass[pk].add(m.listingId);
-                tailByPass[pk] = { listingId: m.listingId, capturedAt: nowIso() };
-              }
-              dbg('run', `${passLabel} p${page}: currSeenByPass/tailByPass write done (pk=${pk}, set size=${currSeenByPass[pk].size})`);
-
               setProgress({
                 page,
                 listingsAccumulated: runState.progress.listingsAccumulated + newOnThisPage,
@@ -207,17 +196,6 @@
       const lastFetchAt = nowIso();
       await dbPut(STORE_META, { key: 'lastFetchAt', value: lastFetchAt });
       await dbPut(STORE_META, { key: 'lastRunSummary', value: { ...cur, completedAt: lastFetchAt, listings: runState.progress.listingsAccumulated } });
-
-      // v0.7.8: persist per-pass scrape sets + tails so the next
-      // Quick Run has a complete expiration baseline to compare
-      // against. Mirrors lines ~1288-1297 of runIncrementalFetch.
-      const scrapeSetsForStorage = {};
-      for (const [pk, set] of Object.entries(currSeenByPass)) {
-        scrapeSetsForStorage[pk] = [...set];
-      }
-      await dbPut(STORE_META, { key: 'currSeenByPass.v1', value: scrapeSetsForStorage });
-      await dbPut(STORE_META, { key: 'tailByPass.v1',     value: tailByPass });
-      dbg('run', `Full Fetch: persisted scrape sets for next run: ${Object.keys(scrapeSetsForStorage).length} passes, tail sentinels recorded for ${Object.keys(tailByPass).length} passes`);
 
       setProgress({ phase: 'complete', message: `Done. ${runState.progress.listingsAccumulated} listings.` });
 

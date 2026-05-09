@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trade Me Board Games Bulk Fetcher (Collector)
 // @namespace    https://github.com/yourname/tm-bgbf
-// @version      0.7.15
+// @version      0.7.16
 // @description  Collect-only edition. Bulk-fetch live Card-game and selected Board-game listings from Trade Me, purge listings whose title matches the blacklist (accessory keywords now folded into the blacklist), tag expansions vs base games, flag freshly-seen listings, and AUTO-EXPORT a JSON file at the end of every run for the standalone web dashboard to consume.
 // @author       you
 // @match        https://www.trademe.co.nz/*
@@ -36,7 +36,7 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.15';
+  const VERSION = '0.7.16';
   const LOG_PREFIX = '[bgbf]';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1304,17 +1304,6 @@
               await dbBulkPut(STORE_LISTINGS, merged);
               dbg('run', `${passLabel} p${page}: dbBulkPut ${merged.length} listings resolved`);
 
-              // v0.7.8: feed the per-pass scrape set + running tail
-              // sentinel for the next Quick Run's expiration baseline.
-              // Mirrors lines ~1217-1226 of runIncrementalFetch.
-              const pk = passKeyOf(sc, cond);
-              if (!currSeenByPass[pk]) currSeenByPass[pk] = new Set();
-              for (const m of merged) {
-                currSeenByPass[pk].add(m.listingId);
-                tailByPass[pk] = { listingId: m.listingId, capturedAt: nowIso() };
-              }
-              dbg('run', `${passLabel} p${page}: currSeenByPass/tailByPass write done (pk=${pk}, set size=${currSeenByPass[pk].size})`);
-
               setProgress({
                 page,
                 listingsAccumulated: runState.progress.listingsAccumulated + newOnThisPage,
@@ -1368,17 +1357,6 @@
       const lastFetchAt = nowIso();
       await dbPut(STORE_META, { key: 'lastFetchAt', value: lastFetchAt });
       await dbPut(STORE_META, { key: 'lastRunSummary', value: { ...cur, completedAt: lastFetchAt, listings: runState.progress.listingsAccumulated } });
-
-      // v0.7.8: persist per-pass scrape sets + tails so the next
-      // Quick Run has a complete expiration baseline to compare
-      // against. Mirrors lines ~1288-1297 of runIncrementalFetch.
-      const scrapeSetsForStorage = {};
-      for (const [pk, set] of Object.entries(currSeenByPass)) {
-        scrapeSetsForStorage[pk] = [...set];
-      }
-      await dbPut(STORE_META, { key: 'currSeenByPass.v1', value: scrapeSetsForStorage });
-      await dbPut(STORE_META, { key: 'tailByPass.v1',     value: tailByPass });
-      dbg('run', `Full Fetch: persisted scrape sets for next run: ${Object.keys(scrapeSetsForStorage).length} passes, tail sentinels recorded for ${Object.keys(tailByPass).length} passes`);
 
       setProgress({ phase: 'complete', message: `Done. ${runState.progress.listingsAccumulated} listings.` });
 
