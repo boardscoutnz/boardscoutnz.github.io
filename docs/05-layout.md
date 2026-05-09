@@ -10,7 +10,7 @@
   between halves).
 - Topbar wraps via base `flex-wrap: wrap`; media queries at 900px and 700px
   shrink and then re-stack the sidebar below the table.
-- The "🆕 Show only NEW listings" button is a full-width sidebar control at
+- The "NEW listings only" button is a full-width sidebar control at
   the very top of the filter column. Inactive = neutral grey; active = red
   to match the inline NEW pills on title cells. Label flips to "🆕 Showing
   NEW only — click to show all" when active.
