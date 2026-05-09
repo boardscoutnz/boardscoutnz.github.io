@@ -36,7 +36,7 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.12';
+  const VERSION = '0.7.13';
   const LOG_PREFIX = '[bgbf]';
 
   // Categories crawled by the bulk fetcher.
