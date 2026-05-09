@@ -114,8 +114,8 @@ function wireFilterControls() {
       btnNewOnly.classList.toggle('active', filters.newListingsOnly);
       btnNewOnly.setAttribute('aria-pressed', filters.newListingsOnly ? 'true' : 'false');
       btnNewOnly.textContent = filters.newListingsOnly
-        ? 'Show <span class=".bold">ALL</span> Listings'
-        : '<span class=".bold">NEW</span> Listings only';
+        ? 'Show ALL Listings'
+        : 'NEW listings only';
       dbg('filter', `[event] newListingsOnly → ${filters.newListingsOnly}`);
       applyFilters();
     });
