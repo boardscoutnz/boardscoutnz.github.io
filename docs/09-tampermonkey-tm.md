@@ -1,13 +1,14 @@
 
-## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.14)
+## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.15)
 
-Runs at `https://www.trademe.co.nz/*`. ~2330 lines. Pipeline: menu click →
+Runs at `https://www.trademe.co.nz/*`. ~2560 lines. Pipeline: menu click →
 build URL list (8 categories × 2 conditions = 16 passes, **shuffled per
-run** in v0.7.14) → polite fetch (mean ~800 ms with a triangular-ish
-distribution over [0.4·X, 1.6·X], occasional 3×–6× "human pauses" that
-are precisely refunded across the next few sleeps so the running mean is
-preserved; rotating Accept / Accept-Language headers; 4 retries with
-multiplicative-jitter exp backoff) → extract (3 fallback methods:
+run** in v0.7.14) → polite fetch (triangular-ish per-call distribution
+around a preset-dependent mean, with occasional "human pauses" partially
+refunded across the next few sleeps; rotating Accept / Accept-Language
+headers; 4 retries with multiplicative-jitter exp backoff. All timing
+numerics vary by active preset — see `CRAWL_SPEED_PRESETS` in
+`01-constants.js`) → extract (3 fallback methods:
 `__NEXT_DATA__` JSON → Next.js Flight stream → DOM cards) → normalise →
 blacklist filter + expansion tag → save to IndexedDB → `reapAndDedup` →
 auto-export `listings.json` (always) plus optionally `listings-example.json`
@@ -26,6 +27,22 @@ Two regexes drive title classification:
   Sleeve, Folded Space, Gamegenic, Ultra Pro, etc.) folded in for v0.7.11.
 - **`EXPANSION_TRIGGER_RX`** + **`BASE_GAME_QUALIFIER_RX`** (used by
   `detectIsExpansion`) — see below.
+
+### Crawl-speed preset slider (v0.7.15)
+
+The Shadow-DOM control panel includes a 3-position snap slider — **Fastest
+/ Balanced / Safest** — directly under the Quick Run / Full Fetch buttons.
+**Fastest** preserves v0.7.14 timing exactly (the upgrade default).
+**Balanced** runs ~1.75× slower with wider jitter and more frequent
+human-pause injections. **Safest** runs ~3.5× slower with the widest
+jitter and longest pauses, intended for use after a TM rate-limit warning
+or for runs outside normal hours. The active key is persisted via
+`GM_setValue('crawlSpeedPreset')` and read at use-time by `politeSleep()`
+(in `04-utilities.js`) and by the `fetchHtml` retry-backoff (in
+`07-network.js`), so a mid-crawl switch affects every subsequent request
+— in-flight `await sleep(…)` calls are not retroactively shortened or
+extended. All numeric values live in `CRAWL_SPEED_PRESETS` in
+`01-constants.js`.
 
 ### Expansion detection (`detectIsExpansion`)
 

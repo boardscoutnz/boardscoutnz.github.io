@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trade Me Board Games Bulk Fetcher (Collector)
 // @namespace    https://github.com/yourname/tm-bgbf
-// @version      0.7.14
+// @version      0.7.15
 // @description  Collect-only edition. Bulk-fetch live Card-game and selected Board-game listings from Trade Me, purge listings whose title matches the blacklist (accessory keywords now folded into the blacklist), tag expansions vs base games, flag freshly-seen listings, and AUTO-EXPORT a JSON file at the end of every run for the standalone web dashboard to consume.
 // @author       you
 // @match        https://www.trademe.co.nz/*
@@ -36,7 +36,7 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.14';
+  const VERSION = '0.7.15';
   const LOG_PREFIX = '[bgbf]';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -60,13 +60,129 @@
     'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
   ];
-  // Long "human pause" frequency (1 in N requests). The pause is 3×–6× the
-  // normal mean, immediately offset by shortening the next 2–3 polite sleeps
-  // so the overall budget is unchanged. See politeSleep() in 04-utilities.js.
-  const HUMAN_PAUSE_FREQUENCY = 32;     // 1-in-32 (within the requested 25–40 band)
-  const HUMAN_PAUSE_MULT_MIN  = 3;
-  const HUMAN_PAUSE_MULT_MAX  = 6;
-  const HUMAN_PAUSE_COMPENSATION_REQUESTS = 3;  // spread the offset across the next N polite sleeps
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Crawl-speed presets (v0.7.15)
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRAWL_SPEED_PRESETS is the single source of truth for every
+  // humanization tunable that affects per-request timing. The active key is
+  // exposed via getActivePresetKey() / getActivePresetConfig() and is
+  // selected by the user via the dashboard slider in 14-ui.js. The runtime
+  // pacing in 04-utilities.js (politeSleep) and 07-network.js (fetchHtml
+  // retry backoff) reads from the active preset at use-time so a mid-crawl
+  // switch affects subsequent requests without restarting the run.
+  //
+  // Tunable fields (all numeric except label / themeColor):
+  //   delayMultiplier          — scales the polite-sleep mean. settings.politeDelayMs * delayMultiplier = mean.
+  //   delayJitterRange         — width coefficient on the triangular kernel; larger = wider spread.
+  //                              The formula `delta = mean * (triKernel * R + (1 - R/2))` keeps E[delta] = mean
+  //                              for any R, since E[triKernel] = 0.5.
+  //   delayLoMult / delayHiMult — post-clamp bounds expressed as multiples of mean. Triangular sums concentrate
+  //                              tightly around the mean so clamp tails barely shift E[delta].
+  //   humanPauseFrequency      — 1-in-N polite-sleep cadence at which a long pause MAY fire.
+  //   humanPauseProbability    — probability the cadence-tick actually fires (so the pause itself isn't periodic).
+  //   humanPauseMultMin/Max    — pause length is mean * uniform(min, max).
+  //   humanPauseCompensationRequests — N sleeps over which to refund the extra time. Only active for FASTEST
+  //                              and BALANCED — SAFEST deliberately under-refunds (see comment) so net average
+  //                              actually grows in the safest mode.
+  //   retryJitterMin / retryJitterMax — multiplicative jitter applied to the exponential backoff base on retry.
+  //
+  // Justifications for the chosen multipliers:
+  //   FASTEST  — must match v0.7.14 behaviour exactly so upgraders see no change. delayMultiplier=1.0, kernel
+  //              coefficient 2.4 with [-0.2, +1.6]X clamp window: identical numbers to the previous top-level
+  //              constants. Default for first-run users. Themed red since this is the highest-detection-risk mode.
+  //   BALANCED — ~1.75x mean, ~25% wider jitter, human pauses ~2x more frequent (1-in-18 within the user-suggested
+  //              15-25 band), pauses themselves ~30% longer; backoff jitter spread roughly doubled. Picks a
+  //              middle-ground operating point for a typical session.
+  //   SAFEST   — ~3.5x mean (in the 3-4x band), kernel approaching uniform-random across a wide window, human
+  //              pauses 1-in-10 (within the 8-12 band) and substantially longer; longest backoff windows on retry.
+  //              Use after a TM rate-limit warning or when crawling outside normal hours.
+  //
+  // Color theming: red for FASTEST (#c0392b — pre-existing in the codebase), orange for BALANCED (#e67e22 —
+  // same saturation family), green for SAFEST (#09b17d — matches the v1.6.19/1.6.20 Show-ALL-Listings green).
+  // These three hex literals MUST live ONLY in this object — every consumer reads them via the
+  // --preset-color CSS custom property set by the slider rendering code.
+
+  const PRESET_FASTEST  = 'fastest';
+  const PRESET_BALANCED = 'balanced';
+  const PRESET_SAFEST   = 'safest';
+
+  const CRAWL_SPEED_PRESETS = {
+    [PRESET_FASTEST]: {
+      label: 'Fastest',
+      themeColor: '#c0392b',
+      delayMultiplier: 1.0,
+      delayJitterRange: 2.4,
+      delayLoMult: 0.4,
+      delayHiMult: 1.6,
+      humanPauseFrequency: 32,
+      humanPauseProbability: 0.5,
+      humanPauseMultMin: 3,
+      humanPauseMultMax: 6,
+      humanPauseCompensationRequests: 3,
+      retryJitterMin: 0.7,
+      retryJitterMax: 1.4,
+    },
+    [PRESET_BALANCED]: {
+      label: 'Balanced',
+      themeColor: '#e67e22',
+      delayMultiplier: 1.75,
+      delayJitterRange: 3.0,
+      delayLoMult: 0.35,
+      delayHiMult: 1.85,
+      humanPauseFrequency: 18,
+      humanPauseProbability: 0.6,
+      humanPauseMultMin: 4,
+      humanPauseMultMax: 8,
+      humanPauseCompensationRequests: 4,
+      retryJitterMin: 0.5,
+      retryJitterMax: 2.0,
+    },
+    [PRESET_SAFEST]: {
+      label: 'Safest',
+      themeColor: '#09b17d',
+      delayMultiplier: 3.5,
+      delayJitterRange: 4.0,
+      delayLoMult: 0.25,
+      delayHiMult: 2.0,
+      humanPauseFrequency: 10,
+      humanPauseProbability: 0.8,
+      humanPauseMultMin: 5,
+      humanPauseMultMax: 10,
+      humanPauseCompensationRequests: 5,
+      retryJitterMin: 0.4,
+      retryJitterMax: 3.0,
+    },
+  };
+
+  // Module-scope cache of the active preset key. Hydrated from GM-storage on
+  // first read; updated by the slider's input handler in 14-ui.js. Reading
+  // from GM-storage on every fetch would be unnecessarily synchronous I/O.
+  // Note: each browser tab has its own module scope, so a preset change in
+  // one tab does NOT propagate to other tabs without a reload — acceptable
+  // for a single-user tool. Mid-crawl preset switches affect ONLY requests
+  // issued AFTER the switch; an already-in-flight `await sleep(…)` is not
+  // shortened or extended retroactively.
+  let _activePresetKey = null;
+  function getActivePresetKey() {
+    if (_activePresetKey == null) {
+      try {
+        const stored = GM_getValue(GM_KEY_CRAWL_SPEED_PRESET, PRESET_FASTEST);
+        _activePresetKey = (stored in CRAWL_SPEED_PRESETS) ? stored : PRESET_FASTEST;
+      } catch (e) {
+        _activePresetKey = PRESET_FASTEST;
+      }
+    }
+    return _activePresetKey;
+  }
+  function setActivePresetKey(key) {
+    if (!(key in CRAWL_SPEED_PRESETS)) return;
+    _activePresetKey = key;
+    try { GM_setValue(GM_KEY_CRAWL_SPEED_PRESET, key); } catch (e) { /* non-fatal */ }
+  }
+  function getActivePresetConfig() {
+    return CRAWL_SPEED_PRESETS[getActivePresetKey()];
+  }
 
   // Categories crawled by the bulk fetcher.
   //
@@ -279,6 +395,10 @@
   // v0.7.14: panel checkbox for the optional listings-example.json export.
   // Stored as a plain boolean via GM_setValue/GM_getValue. Default false.
   const GM_KEY_EXPORT_SAMPLE = 'exportSampleEnabled';
+  // v0.7.15: persisted crawl-speed preset key (one of PRESET_FASTEST /
+  // PRESET_BALANCED / PRESET_SAFEST). Default 'fastest' so upgraders from
+  // v0.7.14 see identical timing.
+  const GM_KEY_CRAWL_SPEED_PRESET = 'crawlSpeedPreset';
 
 // ============================================================================
   // 2. LOGGING
@@ -520,54 +640,51 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // politeSleep — anti-detection humanization (v0.7.14)
+  // politeSleep — anti-detection humanization (v0.7.14, presets v0.7.15)
   // ─────────────────────────────────────────────────────────────────────────
-  // Mean delay is preserved across a run; only the per-call DISTRIBUTION
-  // changes vs the v0.7.13 fixed-mean+uniform-jitter scheme.
+  // Every numeric tunable referenced here lives in CRAWL_SPEED_PRESETS in
+  // 01-constants.js, looked up at use-time via getActivePresetConfig() so a
+  // mid-crawl preset switch (via the dashboard slider) affects every
+  // SUBSEQUENT request — already-in-flight `await sleep(…)` calls are not
+  // shortened or extended retroactively.
   //
-  // Distribution. Let X = settings.politeDelayMs (default 800). Each call
-  // draws delta = X * (avg(r1, r2, r3) * 2.4 - 0.2)  where rN ~ U(0,1).
-  // The triangular-ish kernel `avg(r1,r2,r3)` has mean 0.5, so:
-  //   E[delta] = X * (0.5 * 2.4 - 0.2)
-  //            = X * (1.2 - 0.2)
-  //            = X
-  // and the support is [X*-0.2, X*2.2] which we clamp to [0.4·X, 1.6·X]
-  // post-hoc — clamp tails are statistically rare (a triangular sum sits
-  // tightly around the mean) so clamping has negligible effect on the
-  // expected value. Net result: same mean as v0.7.13, much wider variance,
-  // and a non-uniform shape that is harder to fingerprint than U(0, J).
+  // Distribution. Let mean = settings.politeDelayMs * cfg.delayMultiplier.
+  // Each call draws delta = mean * (avg(r1, r2, r3) * R + (1 - R/2))
+  // where rN ~ U(0,1) and R = cfg.delayJitterRange. The triangular-ish
+  // kernel `avg(r1,r2,r3)` has mean 0.5 so E[delta] = mean for any R; R
+  // controls width only. Post-clamp bounds: [mean * cfg.delayLoMult,
+  // mean * cfg.delayHiMult]. Triangular sums concentrate tightly around the
+  // mean so clamping has negligible effect on the expected value.
   //
-  // Human pauses. Once every HUMAN_PAUSE_FREQUENCY calls (≈1-in-32,
-  // randomized so the cadence isn't itself periodic), emit a long pause of
-  // 3×–6× X simulating the user getting distracted. The extra time is
-  // tracked in `_politeSleepDebt` and offset by SHORTENING the next
-  // HUMAN_PAUSE_COMPENSATION_REQUESTS (=3) sleeps proportionally, so the
-  // running average across any window ≥ ~32 requests is unchanged. If a
-  // compensated sleep would go negative we floor it at 50ms so we still
-  // briefly yield to the event loop. The floor is small enough that the
-  // residual drift across a typical 200-request run is well under 1%.
-  //
-  // No change here increases the AVERAGE delay between requests across a
-  // run; the human-pause time is precisely accounted for and refunded by
-  // the compensation pool.
+  // Human pauses. Once every cfg.humanPauseFrequency calls, with probability
+  // cfg.humanPauseProbability the call emits a long pause of cfg.humanPauseMultMin..Max
+  // x mean (uniform), simulating the user getting distracted. The EXTRA
+  // time is tracked in `_politeSleepDebt` and refunded by SHORTENING the
+  // next cfg.humanPauseCompensationRequests sleeps proportionally; the
+  // floor is 50ms so we still yield. For FASTEST and BALANCED, this keeps
+  // the running average unchanged. For SAFEST the larger pause magnitudes
+  // and tighter compensation count produce a small net increase in mean
+  // delay — by design, since safest mode is supposed to slow things down.
   let _politeSleepDebt = 0;             // ms still owed (positive => shorten next sleeps)
   let _politeSleepCounter = 0;          // request counter for human-pause cadence
   let _politeSleepCompensationLeft = 0; // sleeps remaining over which to spread the debt
 
   async function politeSleep() {
+    const cfg = getActivePresetConfig();
     const s = settings.get();
-    const X = s.politeDelayMs || 800;
+    const mean = (s.politeDelayMs || 800) * cfg.delayMultiplier;
     _politeSleepCounter++;
 
-    // Triangular kernel, mean 0.5, scaled+shifted to mean=X with support
-    // approximately [-0.2X, 2.2X] before clamping.
+    // Triangular kernel, mean 0.5, scaled+shifted to mean = `mean` with
+    // configurable spread (cfg.delayJitterRange).
     const triKernel = (Math.random() + Math.random() + Math.random()) / 3;
-    let delta = X * (triKernel * 2.4 - 0.2);
+    const R = cfg.delayJitterRange;
+    let delta = mean * (triKernel * R + (1 - R / 2));
 
     // Clamp tails — triangular sums concentrate around the mean so this
     // trims a very small fraction of draws and barely shifts E[delta].
-    const lo = X * 0.4;
-    const hi = X * 1.6;
+    const lo = mean * cfg.delayLoMult;
+    const hi = mean * cfg.delayHiMult;
     if (delta < lo) delta = lo;
     if (delta > hi) delta = hi;
 
@@ -575,12 +692,12 @@
     // itself isn't periodic. When emitted, store the EXTRA time as debt to
     // be refunded across the next N sleeps.
     if (_politeSleepCompensationLeft === 0 &&
-        _politeSleepCounter % HUMAN_PAUSE_FREQUENCY === 0 &&
-        Math.random() < 0.5) {
-      const mult = HUMAN_PAUSE_MULT_MIN + Math.random() * (HUMAN_PAUSE_MULT_MAX - HUMAN_PAUSE_MULT_MIN);
-      const longPause = X * mult;
+        _politeSleepCounter % cfg.humanPauseFrequency === 0 &&
+        Math.random() < cfg.humanPauseProbability) {
+      const mult = cfg.humanPauseMultMin + Math.random() * (cfg.humanPauseMultMax - cfg.humanPauseMultMin);
+      const longPause = mean * mult;
       _politeSleepDebt += (longPause - delta);  // EXTRA time vs the sleep we would have done
-      _politeSleepCompensationLeft = HUMAN_PAUSE_COMPENSATION_REQUESTS;
+      _politeSleepCompensationLeft = cfg.humanPauseCompensationRequests;
       delta = longPause;
     } else if (_politeSleepCompensationLeft > 0 && _politeSleepDebt > 0) {
       // Refund: shorten this sleep by debt/remaining so the spread is even.
@@ -787,13 +904,13 @@
         }
         if (e && e.message === 'challenge-page-detected') throw e;
         if (attempt < maxAttempts) {
-          // v0.7.14: multiplicative jitter (×0.7..×1.4) instead of an
-          // additive 0..500ms cap. E[multiplier] = 1.05 ≈ same expected
-          // wait as the previous "+0..500" added to a 1500..30000 base
-          // (which averaged ~250ms extra), but with proportionally-wider
-          // spread so retries from many parallel runs don't cluster.
+          // v0.7.14 / v0.7.15: multiplicative-jitter exp backoff. The
+          // jitter window is preset-dependent — see CRAWL_SPEED_PRESETS in
+          // 01-constants.js. Read at use-time so a mid-crawl preset switch
+          // affects subsequent retries.
+          const cfg = getActivePresetConfig();
           const base = clamp(800 * Math.pow(2, attempt), 1500, 30000);
-          const mult = 0.7 + Math.random() * 0.7;
+          const mult = cfg.retryJitterMin + Math.random() * (cfg.retryJitterMax - cfg.retryJitterMin);
           const backoff = base * mult;
           await sleep(backoff);
         }
@@ -1949,6 +2066,42 @@
     }
     .floating-tip.visible { opacity: 1; visibility: visible; }
     footer { font-size: 10px; color: #888; text-align: center; margin-top: 6px; }
+
+    /* v0.7.15: crawl-speed preset slider. The thematic colour --preset-color
+       is set on #crawl-speed at runtime from the active preset's themeColor
+       — no hex literals live in this stylesheet. */
+    #crawl-speed { padding: 8px 4px 4px; margin-bottom: 6px; --preset-color: #888; }
+    #crawl-speed .row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    #crawl-speed .row strong { font-size: 12px; }
+    #crawl-speed .chip {
+      display: inline-block; min-width: 60px; padding: 2px 6px;
+      border-radius: 10px; background: var(--preset-color); color: #fff;
+      font-size: 11px; font-weight: 700; text-align: center;
+      transition: background .15s;
+    }
+    #crawl-speed-track {
+      width: 100%; margin: 4px 0 2px; appearance: none; -webkit-appearance: none;
+      height: 4px; background: #ddd; border-radius: 2px; outline: none;
+    }
+    #crawl-speed-track::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--preset-color); border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      cursor: pointer; transition: background .15s;
+    }
+    #crawl-speed-track::-moz-range-thumb {
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--preset-color); border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      cursor: pointer; transition: background .15s;
+    }
+    #crawl-speed .ticks {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: #666; padding: 0 2px;
+    }
+    #crawl-speed .ticks span { flex: 0 0 auto; }
+    #crawl-speed .ticks span.active { color: var(--preset-color); font-weight: 700; }
   `;
 
   function ensureUI() {
@@ -1989,6 +2142,19 @@
               <span class="info-tip" data-tip="Walks every category from page 1, refreshing all listings. Slow — 10–30 minutes. Use after schema changes or to seed a fresh database.">?</span>
             </span>
           </section>
+          <section id="crawl-speed">
+            <div class="row">
+              <strong>Crawl speed</strong>
+              <span id="crawl-speed-chip" class="chip">Fastest</span>
+              <span class="info-tip" id="crawl-speed-info" data-tip="">?</span>
+            </div>
+            <input id="crawl-speed-track" type="range" min="0" max="2" step="1" value="0" />
+            <div class="ticks">
+              <span data-pos="0">Fastest</span>
+              <span data-pos="1">Balanced</span>
+              <span data-pos="2">Safest</span>
+            </div>
+          </section>
           <section id="actions2">
             <span class="btn-with-info">
               <button id="act-export" class="btn">Export JSON now</button>
@@ -2027,7 +2193,7 @@
   function wirePanel() {
     $('#fab').addEventListener('click', () => {
       const p = $('#panel'); p.hidden = !p.hidden;
-      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); }
+      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); hydrateCrawlSpeedSlider(); }
     });
     const exportSampleEl = $('#opt-export-sample');
     if (exportSampleEl) {
@@ -2036,6 +2202,7 @@
         catch (e) { warn('persist exportSampleEnabled failed', e); }
       });
     }
+    wireCrawlSpeedSlider();
     $('#panel-close').addEventListener('click', () => { $('#panel').hidden = true; });
     $('#act-full').addEventListener('click', () => runFullFetch());
     $('#act-incremental').addEventListener('click', () => runIncrementalFetch());
@@ -2145,6 +2312,73 @@
   function isExportSampleEnabled() {
     try { return !!GM_getValue(GM_KEY_EXPORT_SAMPLE, false); }
     catch (e) { return false; }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // v0.7.15: crawl-speed preset slider
+  // ─────────────────────────────────────────────────────────────────────────
+  // The 3-position snap slider in the panel maps integer 0/1/2 → preset
+  // key. Persistence + module-state cache live in 01-constants.js
+  // (GM_KEY_CRAWL_SPEED_PRESET, getActivePresetKey/setActivePresetKey).
+  // Theme colour is the single source of truth on CRAWL_SPEED_PRESETS — it
+  // is propagated to the slider styling exclusively via the
+  // --preset-color CSS custom property set on #crawl-speed.
+  const CRAWL_SPEED_SLIDER_KEYS = [PRESET_FASTEST, PRESET_BALANCED, PRESET_SAFEST];
+
+  function presetKeyFromSliderPos(pos) {
+    const idx = Math.max(0, Math.min(2, parseInt(pos, 10) || 0));
+    return CRAWL_SPEED_SLIDER_KEYS[idx];
+  }
+  function sliderPosFromPresetKey(key) {
+    const idx = CRAWL_SPEED_SLIDER_KEYS.indexOf(key);
+    return idx < 0 ? 0 : idx;
+  }
+
+  function applyCrawlSpeedTheme(presetKey) {
+    if (!uiShadow) return;
+    const preset = CRAWL_SPEED_PRESETS[presetKey] || CRAWL_SPEED_PRESETS[PRESET_FASTEST];
+    const root = uiShadow.getElementById('crawl-speed');
+    if (root) root.style.setProperty('--preset-color', preset.themeColor);
+    const chip = uiShadow.getElementById('crawl-speed-chip');
+    if (chip) chip.textContent = preset.label;
+    const ticks = uiShadow.querySelectorAll('#crawl-speed .ticks span');
+    const activePos = sliderPosFromPresetKey(presetKey);
+    ticks.forEach((el) => {
+      const isActive = parseInt(el.getAttribute('data-pos'), 10) === activePos;
+      el.classList.toggle('active', isActive);
+    });
+    const info = uiShadow.getElementById('crawl-speed-info');
+    if (info) {
+      const tips = {
+        [PRESET_FASTEST]:  'Fastest: matches v0.7.14 timing; higher detection risk. Default.',
+        [PRESET_BALANCED]: 'Balanced: ~1.75× slower with wider jitter and more frequent human-pause injections; moderate risk.',
+        [PRESET_SAFEST]:   'Safest: ~3.5× slower with maximum jitter and longest pauses; lowest detection risk. Use after a TM rate-limit warning or outside normal hours.',
+      };
+      info.setAttribute('data-tip', tips[presetKey] || tips[PRESET_FASTEST]);
+    }
+  }
+
+  function hydrateCrawlSpeedSlider() {
+    if (!uiShadow) return;
+    const slider = uiShadow.getElementById('crawl-speed-track');
+    if (!slider) return;
+    const key = getActivePresetKey();
+    slider.value = String(sliderPosFromPresetKey(key));
+    applyCrawlSpeedTheme(key);
+  }
+
+  function wireCrawlSpeedSlider() {
+    const slider = $('#crawl-speed-track');
+    if (!slider) return;
+    // 'input' (not 'change') so the chip + theme update LIVE while the
+    // user drags, and the integer-step constraint snaps the thumb to one
+    // of the three positions automatically.
+    slider.addEventListener('input', () => {
+      const key = presetKeyFromSliderPos(slider.value);
+      setActivePresetKey(key);
+      applyCrawlSpeedTheme(key);
+    });
+    hydrateCrawlSpeedSlider();
   }
 
   async function refreshPanelStatus() {

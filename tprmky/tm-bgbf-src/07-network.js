@@ -48,13 +48,13 @@
         }
         if (e && e.message === 'challenge-page-detected') throw e;
         if (attempt < maxAttempts) {
-          // v0.7.14: multiplicative jitter (×0.7..×1.4) instead of an
-          // additive 0..500ms cap. E[multiplier] = 1.05 ≈ same expected
-          // wait as the previous "+0..500" added to a 1500..30000 base
-          // (which averaged ~250ms extra), but with proportionally-wider
-          // spread so retries from many parallel runs don't cluster.
+          // v0.7.14 / v0.7.15: multiplicative-jitter exp backoff. The
+          // jitter window is preset-dependent — see CRAWL_SPEED_PRESETS in
+          // 01-constants.js. Read at use-time so a mid-crawl preset switch
+          // affects subsequent retries.
+          const cfg = getActivePresetConfig();
           const base = clamp(800 * Math.pow(2, attempt), 1500, 30000);
-          const mult = 0.7 + Math.random() * 0.7;
+          const mult = cfg.retryJitterMin + Math.random() * (cfg.retryJitterMax - cfg.retryJitterMin);
           const backoff = base * mult;
           await sleep(backoff);
         }
