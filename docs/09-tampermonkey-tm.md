@@ -1,17 +1,27 @@
 
-## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.13)
+## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.14)
 
-Runs at `https://www.trademe.co.nz/*`. ~2060 lines. Pipeline: menu click →
-build URL list (8 categories × 2 conditions = 16 passes) → polite fetch
-(~800 ms delay, 4 retries with exp backoff) → extract (3 fallback methods:
+Runs at `https://www.trademe.co.nz/*`. ~2330 lines. Pipeline: menu click →
+build URL list (8 categories × 2 conditions = 16 passes, **shuffled per
+run** in v0.7.14) → polite fetch (mean ~800 ms with a triangular-ish
+distribution over [0.4·X, 1.6·X], occasional 3×–6× "human pauses" that
+are precisely refunded across the next few sleeps so the running mean is
+preserved; rotating Accept / Accept-Language headers; 4 retries with
+multiplicative-jitter exp backoff) → extract (3 fallback methods:
 `__NEXT_DATA__` JSON → Next.js Flight stream → DOM cards) → normalise →
 blacklist filter + expansion tag → save to IndexedDB → `reapAndDedup` →
-auto-export `listings.json` AND `listings-example.json`.
+auto-export `listings.json` (always) plus optionally `listings-example.json`
+(only when the panel checkbox "Also export listings-example.json (sample)"
+is ticked — defaults off, persisted across sessions via GM_setValue).
 
 Two regexes drive title classification:
 
-- **`PURGE_TITLE_RX`** — built from `PURGE_TITLE_KEYWORDS` (~190 banned
-  words). Matched titles are dropped at normalise time and never reach
+- **`PURGE_TITLE_RX`** — built from `PURGE_TITLE_KEYWORDS` (~390 banned
+  words; v0.7.14 added Chutes/Shooters and Ladders variants, more
+  conversation/dating-deck tokens, more bulk-quantity tokens, and a
+  cluster of misc novelty/non-board-game listings — see the inline
+  v0.7.14 comments in `01-constants.js`). Matched titles are dropped
+  at normalise time and never reach
   the export. Includes the former accessory keywords (Dragon Shield, Card
   Sleeve, Folded Space, Gamegenic, Ultra Pro, etc.) folded in for v0.7.11.
 - **`EXPANSION_TRIGGER_RX`** + **`BASE_GAME_QUALIFIER_RX`** (used by

@@ -38,16 +38,32 @@
     let consecutiveFailures = 0;
     let passIdx = 0;
 
+    // v0.7.14 anti-detection: shuffle the OUTER (subcat × condition) pass
+    // order per run so the request stream isn't deterministically top-down
+    // through CATEGORIES on every run. Pagination WITHIN a pass remains
+    // sequential — the v0.7.13 overflow short-circuit relies on that and
+    // each pass's seenInPass set is local to that pass anyway. Each pair
+    // is independent, so any ordering is safe. lastSubcatIndex is now the
+    // ORIGINAL CATEGORIES index of the most-recently-completed pass; not
+    // a position in the shuffled run order. There is no consumer of that
+    // value (no resume logic), so the change is observational only.
+    const passList = [];
+    for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let j = 0; j < conditionsToFetch.length; j++) {
+        passList.push({ sc: CATEGORIES[i], cond: conditionsToFetch[j], originalIndex: i });
+      }
+    }
+    fisherYatesShuffle(passList);
+    dbg('run', `Full Fetch pass order (shuffled): ${passList.map((p) => `${p.sc.slug}/${p.cond}`).join(', ')}`);
+
     try {
-      for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let pIdx = 0; pIdx < passList.length; pIdx++) {
         if (runState.abortRequested) { setProgress({ phase: 'aborted', message: 'Aborted by user.' }); return; }
-        const sc = CATEGORIES[i];
-        for (let j = 0; j < conditionsToFetch.length; j++) {
-          if (runState.abortRequested) { setProgress({ phase: 'aborted', message: 'Aborted by user.' }); return; }
-          const cond = conditionsToFetch[j];
+        const { sc, cond, originalIndex } = passList[pIdx];
+        {
           const passLabel = conditionsToFetch.length > 1 ? `${sc.name} (${cond})` : sc.name;
 
-          cur.lastSubcatIndex = i; cur.lastPage = 0;
+          cur.lastSubcatIndex = originalIndex; cur.lastPage = 0;
           GM_setValue(GM_KEY_CURRENT_RUN, JSON.stringify(cur));
           log(`>>> Pass ${passIdx + 1}/${totalPasses}: ${passLabel} (path=${sc.path})`);
           setProgress({ phase: 'fetching', subcat: passLabel, page: 1, doneSubcats: passIdx, message: `Fetching ${passLabel}…` });
@@ -275,13 +291,23 @@
     let resurfacedThisRun = 0;   // already-known listings still visible — flag cleared
     let passIdx = 0;
 
+    // v0.7.14: same anti-detection shuffle as runFullFetch — randomise the
+    // (subcat × condition) outer pass order per run. See runFullFetch for
+    // the rationale.
+    const passList = [];
+    for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let j = 0; j < conditionsToFetch.length; j++) {
+        passList.push({ sc: CATEGORIES[i], cond: conditionsToFetch[j] });
+      }
+    }
+    fisherYatesShuffle(passList);
+    dbg('run', `Quick Run pass order (shuffled): ${passList.map((p) => `${p.sc.slug}/${p.cond}`).join(', ')}`);
+
     try {
-      for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let pIdx = 0; pIdx < passList.length; pIdx++) {
         if (runState.abortRequested) break;
-        const sc = CATEGORIES[i];
-        for (let j = 0; j < conditionsToFetch.length; j++) {
-          if (runState.abortRequested) break;
-          const cond = conditionsToFetch[j];
+        const { sc, cond } = passList[pIdx];
+        {
           const passLabel = conditionsToFetch.length > 1 ? `${sc.name} (${cond})` : sc.name;
           setProgress({ phase: 'fetching', subcat: passLabel, doneSubcats: passIdx, message: `Incremental: ${passLabel}` });
 

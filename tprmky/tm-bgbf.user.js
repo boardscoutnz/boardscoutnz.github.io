@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trade Me Board Games Bulk Fetcher (Collector)
 // @namespace    https://github.com/yourname/tm-bgbf
-// @version      0.7.13
+// @version      0.7.14
 // @description  Collect-only edition. Bulk-fetch live Card-game and selected Board-game listings from Trade Me, purge listings whose title matches the blacklist (accessory keywords now folded into the blacklist), tag expansions vs base games, flag freshly-seen listings, and AUTO-EXPORT a JSON file at the end of every run for the standalone web dashboard to consume.
 // @author       you
 // @match        https://www.trademe.co.nz/*
@@ -36,8 +36,37 @@
   // 1. CONSTANTS
   // ============================================================================
 
-  const VERSION = '0.7.13';
+  const VERSION = '0.7.14';
   const LOG_PREFIX = '[bgbf]';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Anti-detection humanization (v0.7.14)
+  // ─────────────────────────────────────────────────────────────────────────
+  // Pools rotated per-request by 07-network.js fetchHtml() to avoid emitting
+  // an identical request fingerprint on every fetch. Mean delay across a run
+  // is preserved by 04-utilities.js politeSleep() — these pools only affect
+  // header shape, not timing. NZ-plausible Accept-Language values; trivially
+  // varied Accept values. Keep both pools small — wider pools would be more
+  // human but also more obviously enumerated.
+  const ACCEPT_LANGUAGE_POOL = [
+    'en-NZ,en;q=0.9',
+    'en-NZ,en-AU;q=0.9,en;q=0.8',
+    'en-AU,en-NZ;q=0.9,en;q=0.8',
+    'en-NZ,en-GB;q=0.9,en;q=0.8',
+    'en-NZ,en-US;q=0.8,en;q=0.7',
+  ];
+  const ACCEPT_HEADER_POOL = [
+    'text/html,application/xhtml+xml',
+    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+  ];
+  // Long "human pause" frequency (1 in N requests). The pause is 3×–6× the
+  // normal mean, immediately offset by shortening the next 2–3 polite sleeps
+  // so the overall budget is unchanged. See politeSleep() in 04-utilities.js.
+  const HUMAN_PAUSE_FREQUENCY = 32;     // 1-in-32 (within the requested 25–40 band)
+  const HUMAN_PAUSE_MULT_MIN  = 3;
+  const HUMAN_PAUSE_MULT_MAX  = 6;
+  const HUMAN_PAUSE_COMPENSATION_REQUESTS = 3;  // spread the offset across the next N polite sleeps
 
   // Categories crawled by the bulk fetcher.
   //
@@ -75,7 +104,34 @@
   // AND on every post-process pass:
 
   const PURGE_TITLE_KEYWORDS = [
-    'Briarpatch', 'beer pong', 'rubik', 'rubiks', 'Any', 'buy now per game', 'Casino', 'punch', 'punching', 'Poker', 'Craps', 'Chair', 'noughts and crosses', 'Doll house', 'dollhouse', 'Deck Case', 'Billiards', 'jenga', 'Snooker', 'Subbuteo', 'Air Hockey', 'chess', 'jigsaw', 'mahjong', 'outdoor', 'vintage', 'backgammon', 'scrabble', 'cornhole', 'warhammer', 'wargaming', 'd&d', 'dnd', 'dungeons and dragons', 'dungeons & dragons', 'heroquest', 'pathfinder', 'cthulhu', 'q workshop', 'mtg', 'magic the gathering', 'yu-gi-oh', 'yugioh', 'keyforge', 'battletech', 'heroscape', 'unlock!', 'exit the game', 'escape room', 'exploding kittens', 'top trumps', 'tarot deck', 'tarot', 'polyhedral', 'dice set', 'dice set dice games', 'card binder', 'card shuffler', 'trading card', 'monopoly', 'cribbage', 'yahtzee', 'rummy', 'bingo', 'lottery', 'roulette', 'domino', 'connect 4', 'connect four', 'battleship', 'tic tac toe', 'tic-tac-toe', 'maze', 'spot it', 'memory', 'puzzle', 'puzzles', 'sticker book', 'trivia', 'uno', 'waddingtons', 'bicycle', 'humanity', 'children', 'kids', 'toddler', 'educational', 'alphabet', 'orchard', 'thinkfun', 'bigjigs', 'kosmos', 'haba', 'lego', 'plastic', 'magnetic', 'sensory', 'novelty', 'unicorns', 'corn hole', 'foosball', 'football', 'puck game', 'ring toss', 'bag toss', 'whack mole', 'throw throw', 'prize wheel', 'raffle', 'game table cloth', 'date night', 'drinking game', 'drinking games', 'drink', 'drunk', 'game set', 'high quality', 'professional', 'performance', 'interactive', 'interaction', 'sex', 'intimate', 'intimacy', 'labia', 'dick', 'f**k', 'f***', 'f***?', 'hitler', 'lube', 'penis', 'meme', 'playing cards', 'afx', 'ak interactive', 'ptn', 'mancala', 'checkers', 'Pokémon Card', 'Pokémon Cards', 'Pokemon Card', 'Pokemon Cards', 'Mahjongg', 'Mah jong', 'Mah Jongg', 'Strapless', 'Remote', 'Video Game', 'Toy', 'Pub game', 'Number Balls', 'Blowjob', 'Bulk Family', 'Bulk games', 'Bulk boardgames', 'Bulk board games', 'Bulk lot', 'Sudoku', 'Cards Against', 'Citadels', 'Cluedo', 'Cooked Aussies', 'D & D', 'Disney', 'Gambling', 'Wooden Toss', 'Building Block', 'Building Blocks', 'Fidget', '30ML', 'Bottle Opener', 'Bubblegum', 'Buzzed', 'Buzzer', 'Darts', 'Dartboard', 'Board Toy', 'Ass', 'Dumb', 'Whack A Mole', 'Curling', 'Shuffleboard', 'Bible', 'Guess Who', 'Guess Who?', 'Kitty', 'Handbag', 'Hungry Hippos', 'Jumanji', 'Projector', 'Mouse Trap', 'Pictionary', '1000 Piece', '1000 Pieces', '1000-Piece', '1000-Pieces', '1000Piece', '1000Pieces', 'Pressure Washer', 'Psycho Killer', 'Psycho Killer:', 'Healing Crystal', 'Ridley\'s', 'Ridleys', 'Ridley', 'RISK', 'Santa', 'Christmas', 'WASJIG', 'Shut The Box', 'Smart Games', 'SmartGames', 'Flash Card', 'Flash Cards', 'Chameleon', 'Walking Dead', 'Washers', 'Trail by Trolley', 'Twister', 'Vampire', 'Velcro', 'Unmatched', 'Thomas', 'Runequest', 'Brimstone', 'Pokémon', 'Harry Potter', 'Gloomhaven', 'Final Girl', 'TCG', 'LCG', 'Zombicide', 'Lord of the Rings', 'Axis & Allies', 'One Piece', 'Paw Patrol', 'Adult', 'Arkham Horror', 'Basketball', 'Beat That', 'Blue Opal', 'Bluey', 'Bop It', 'Blood on the Clocktower', 'xHaba', 'Dragon Shield', 'Card Holder', 'Card Holders', 'Card Sleeve', 'Card Sleeves', 'Dice Cup', 'Dice Cups', 'Dice Tray', 'Dice Trays', 'Tablecloth', 'Carry Case', 'Carry Cases', 'Game Dice', 'Citadel', 'Folded Space', 'Storage Container', 'Gamegenic', 'Kingshield', 'LPG', 'MDG', 'Monument Pro', 'Ultra Pro', 'Ultimate Guard', 'Cushion', 'Pillow', 'Tangram', 'Paddle Ball', 'Four in a Row', 'Quoits', 'Cricket', 'Brain Teaser', 'Pub Quiz', 'Balancing Game', 'Noughts & Crosses', 'Murder Mystery', 'Game Prop', 'Game Props', 'Melissa & Doug', 'Matching Game', 'Twerk', 'Colouring Book', 'Coloring Book', 'Oracle Deck', 'Fortune Telling', 'Iron Clays', 'Tumbling Tower', 'Dice Pack', 'Reversible', 'Snakes and Ladders', 'Snakes & Ladders', 'Cup Holders', 'Mathematics', 'Hot Wheels', 'Ten Pin Bowling', 'Newtons Cradle', 'Hedbanz', 'Conversation Cards', 'Dating Game', 'Dating Games', 'Dating Card', 'Dating Cards', 'Blank Dice', 'Wooden Dice', '500pcs', 'Per Pack', 'Premium Sleeves', '1pc', '2pc', '3pc', '4pc', '5pc', '6pc', '7pc', '8pc', '9pc', '10pc', '1pcs', '2pcs', '3pcs', '4pcs', '5pcs', '6pcs', '7pcs', '8pcs', '9pcs', '10pcs', '15pc', '15pcs', '20pc', '20pcs', '25pc', '25pcs', '50pc', '50pcs', '100pc', '100pcs', '200pc', '200pcs', '250pc', '250pcs', '500pc', '6 Nimmt!', 'Akumulate', 'Ping Pong', 'Photo Cards', 'Colorful Balls', 'Bachelorette', 'Microns', 'Waterproof', 'Stress Relief', 'Wooden Set', 'Magic Trick', 'Magical Trick', 'Road Trip', 'Crafts', 'Wooden Disc', 'Wooden Disk'
+    'Briarpatch', 'beer pong', 'rubik', 'rubiks', 'Any', 'buy now per game', 'Casino', 'punch', 'punching', 'Poker', 'Craps', 'Chair', 'noughts and crosses', 'Doll house', 'dollhouse', 'Deck Case', 'Billiards', 'jenga', 'Snooker', 'Subbuteo', 'Air Hockey', 'chess', 'jigsaw', 'mahjong', 'outdoor', 'vintage', 'backgammon', 'scrabble', 'cornhole', 'warhammer', 'wargaming', 'd&d', 'dnd', 'dungeons and dragons', 'dungeons & dragons', 'heroquest', 'pathfinder', 'cthulhu', 'q workshop', 'mtg', 'magic the gathering', 'yu-gi-oh', 'yugioh', 'keyforge', 'battletech', 'heroscape', 'unlock!', 'exit the game', 'escape room', 'exploding kittens', 'top trumps', 'tarot deck', 'tarot', 'polyhedral', 'dice set', 'dice set dice games', 'card binder', 'card shuffler', 'trading card', 'monopoly', 'cribbage', 'yahtzee', 'rummy', 'bingo', 'lottery', 'roulette', 'domino', 'connect 4', 'connect four', 'battleship', 'tic tac toe', 'tic-tac-toe', 'maze', 'spot it', 'memory', 'puzzle', 'puzzles', 'sticker book', 'trivia', 'uno', 'waddingtons', 'bicycle', 'humanity', 'children', 'kids', 'toddler', 'educational', 'alphabet', 'orchard', 'thinkfun', 'bigjigs', 'kosmos', 'haba', 'lego', 'plastic', 'magnetic', 'sensory', 'novelty', 'unicorns', 'corn hole', 'foosball', 'football', 'puck game', 'ring toss', 'bag toss', 'whack mole', 'throw throw', 'prize wheel', 'raffle', 'game table cloth', 'date night', 'drinking game', 'drinking games', 'drink', 'drunk', 'game set', 'high quality', 'professional', 'performance', 'interactive', 'interaction', 'sex', 'intimate', 'intimacy', 'labia', 'dick', 'f**k', 'f***', 'f***?', 'hitler', 'lube', 'penis', 'meme', 'playing cards', 'afx', 'ak interactive', 'ptn', 'mancala', 'checkers', 'Pokémon Card', 'Pokémon Cards', 'Pokemon Card', 'Pokemon Cards', 'Mahjongg', 'Mah jong', 'Mah Jongg', 'Strapless', 'Remote', 'Video Game', 'Toy', 'Pub game', 'Number Balls', 'Blowjob', 'Bulk Family', 'Bulk games', 'Bulk boardgames', 'Bulk board games', 'Bulk lot', 'Sudoku', 'Cards Against', 'Citadels', 'Cluedo', 'Cooked Aussies', 'D & D', 'Disney', 'Gambling', 'Wooden Toss', 'Building Block', 'Building Blocks', 'Fidget', '30ML', 'Bottle Opener', 'Bubblegum', 'Buzzed', 'Buzzer', 'Darts', 'Dartboard', 'Board Toy', 'Ass', 'Dumb', 'Whack A Mole', 'Curling', 'Shuffleboard', 'Bible', 'Guess Who', 'Guess Who?', 'Kitty', 'Handbag', 'Hungry Hippos', 'Jumanji', 'Projector', 'Mouse Trap', 'Pictionary', '1000 Piece', '1000 Pieces', '1000-Piece', '1000-Pieces', '1000Piece', '1000Pieces', 'Pressure Washer', 'Psycho Killer', 'Psycho Killer:', 'Healing Crystal', 'Ridley\'s', 'Ridleys', 'Ridley', 'RISK', 'Santa', 'Christmas', 'WASJIG', 'Shut The Box', 'Smart Games', 'SmartGames', 'Flash Card', 'Flash Cards', 'Chameleon', 'Walking Dead', 'Washers', 'Trail by Trolley', 'Twister', 'Vampire', 'Velcro', 'Unmatched', 'Thomas', 'Runequest', 'Brimstone', 'Pokémon', 'Harry Potter', 'Gloomhaven', 'Final Girl', 'TCG', 'LCG', 'Zombicide', 'Lord of the Rings', 'Axis & Allies', 'One Piece', 'Paw Patrol', 'Adult', 'Arkham Horror', 'Basketball', 'Beat That', 'Blue Opal', 'Bluey', 'Bop It', 'Blood on the Clocktower', 'xHaba', 'Dragon Shield', 'Card Holder', 'Card Holders', 'Card Sleeve', 'Card Sleeves', 'Dice Cup', 'Dice Cups', 'Dice Tray', 'Dice Trays', 'Tablecloth', 'Carry Case', 'Carry Cases', 'Game Dice', 'Citadel', 'Folded Space', 'Storage Container', 'Gamegenic', 'Kingshield', 'LPG', 'MDG', 'Monument Pro', 'Ultra Pro', 'Ultimate Guard', 'Cushion', 'Pillow', 'Tangram', 'Paddle Ball', 'Four in a Row', 'Quoits', 'Cricket', 'Brain Teaser', 'Pub Quiz', 'Balancing Game', 'Noughts & Crosses', 'Murder Mystery', 'Game Prop', 'Game Props', 'Melissa & Doug', 'Matching Game', 'Twerk', 'Colouring Book', 'Coloring Book', 'Oracle Deck', 'Fortune Telling', 'Iron Clays', 'Tumbling Tower', 'Dice Pack', 'Reversible', 'Snakes and Ladders', 'Snakes & Ladders',
+    // v0.7.14 added: "Snakes and Ladders" variants (Chutes/Shooters).
+    'Shooters and Ladders', 'Shooters & Ladders', 'Shooters + Ladders',
+    'Chutes and Ladders', 'Chutes & Ladders', 'Chutes + Ladders',
+    'Cup Holders', 'Mathematics', 'Hot Wheels', 'Ten Pin Bowling', 'Newtons Cradle', 'Hedbanz', 'Conversation Cards',
+    // v0.7.14 added: more conversation/dating-deck variants near
+    // existing "Conversation Cards".
+    'Conversation Starter', 'Conversation Starters', 'Couples Conversation',
+    'Dating Game', 'Dating Games', 'Dating Card', 'Dating Cards', 'Blank Dice', 'Wooden Dice', '500pcs', 'Per Pack', 'Premium Sleeves', '1pc', '2pc', '3pc', '4pc', '5pc', '6pc', '7pc', '8pc', '9pc', '10pc', '1pcs', '2pcs', '3pcs', '4pcs', '5pcs', '6pcs', '7pcs', '8pcs', '9pcs', '10pcs', '15pc', '15pcs', '20pc', '20pcs', '25pc', '25pcs', '50pc', '50pcs', '100pc', '100pcs', '200pc', '200pcs', '250pc', '250pcs', '500pc',
+    // v0.7.14 added: more bulk-quantity tokens alongside the existing Npc/Npcs sweep.
+    '100 Pcs', '12Pcs', '40pcs', '50 Pack',
+    '6 Nimmt!', 'Akumulate', 'Ping Pong', 'Photo Cards', 'Colorful Balls', 'Bachelorette', 'Microns', 'Waterproof', 'Stress Relief', 'Wooden Set', 'Magic Trick', 'Magical Trick', 'Road Trip', 'Crafts', 'Wooden Disc', 'Wooden Disk',
+    // v0.7.14 added: misc novelty / non-board-game listings that
+    // keep showing up in the corpus.
+    'Clue Board Game', 'Clue BoardGame',
+    'Pleasure',
+    'Crazy Caterpillar',
+    'Police Alert',
+    'Dodgeball',
+    'Rainbow Ball',
+    'House Props',
+    'Taboo',
+    'AFL', 'NRL',
+    '30 Seconds',
+    '5 Second Rule',
+    'LED',
+    'Fun Family Game',
+    'Playing Card', 'Playing Cards'
   ];
 
   // Build the blacklist regex from the keyword array. Entries are escaped
@@ -220,6 +276,9 @@
   // GM keys
   const GM_KEY_SETTINGS      = 'settings.v1';
   const GM_KEY_CURRENT_RUN   = 'currentRun.v1';
+  // v0.7.14: panel checkbox for the optional listings-example.json export.
+  // Stored as a plain boolean via GM_setValue/GM_getValue. Default false.
+  const GM_KEY_EXPORT_SAMPLE = 'exportSampleEnabled';
 
 // ============================================================================
   // 2. LOGGING
@@ -460,10 +519,95 @@
     return { numeric, label };
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // politeSleep — anti-detection humanization (v0.7.14)
+  // ─────────────────────────────────────────────────────────────────────────
+  // Mean delay is preserved across a run; only the per-call DISTRIBUTION
+  // changes vs the v0.7.13 fixed-mean+uniform-jitter scheme.
+  //
+  // Distribution. Let X = settings.politeDelayMs (default 800). Each call
+  // draws delta = X * (avg(r1, r2, r3) * 2.4 - 0.2)  where rN ~ U(0,1).
+  // The triangular-ish kernel `avg(r1,r2,r3)` has mean 0.5, so:
+  //   E[delta] = X * (0.5 * 2.4 - 0.2)
+  //            = X * (1.2 - 0.2)
+  //            = X
+  // and the support is [X*-0.2, X*2.2] which we clamp to [0.4·X, 1.6·X]
+  // post-hoc — clamp tails are statistically rare (a triangular sum sits
+  // tightly around the mean) so clamping has negligible effect on the
+  // expected value. Net result: same mean as v0.7.13, much wider variance,
+  // and a non-uniform shape that is harder to fingerprint than U(0, J).
+  //
+  // Human pauses. Once every HUMAN_PAUSE_FREQUENCY calls (≈1-in-32,
+  // randomized so the cadence isn't itself periodic), emit a long pause of
+  // 3×–6× X simulating the user getting distracted. The extra time is
+  // tracked in `_politeSleepDebt` and offset by SHORTENING the next
+  // HUMAN_PAUSE_COMPENSATION_REQUESTS (=3) sleeps proportionally, so the
+  // running average across any window ≥ ~32 requests is unchanged. If a
+  // compensated sleep would go negative we floor it at 50ms so we still
+  // briefly yield to the event loop. The floor is small enough that the
+  // residual drift across a typical 200-request run is well under 1%.
+  //
+  // No change here increases the AVERAGE delay between requests across a
+  // run; the human-pause time is precisely accounted for and refunded by
+  // the compensation pool.
+  let _politeSleepDebt = 0;             // ms still owed (positive => shorten next sleeps)
+  let _politeSleepCounter = 0;          // request counter for human-pause cadence
+  let _politeSleepCompensationLeft = 0; // sleeps remaining over which to spread the debt
+
   async function politeSleep() {
     const s = settings.get();
-    const jitter = Math.random() * (s.politeDelayJitterMs || 0);
-    await sleep((s.politeDelayMs || 800) + jitter);
+    const X = s.politeDelayMs || 800;
+    _politeSleepCounter++;
+
+    // Triangular kernel, mean 0.5, scaled+shifted to mean=X with support
+    // approximately [-0.2X, 2.2X] before clamping.
+    const triKernel = (Math.random() + Math.random() + Math.random()) / 3;
+    let delta = X * (triKernel * 2.4 - 0.2);
+
+    // Clamp tails — triangular sums concentrate around the mean so this
+    // trims a very small fraction of draws and barely shifts E[delta].
+    const lo = X * 0.4;
+    const hi = X * 1.6;
+    if (delta < lo) delta = lo;
+    if (delta > hi) delta = hi;
+
+    // Inject a long human pause occasionally, randomized so the cadence
+    // itself isn't periodic. When emitted, store the EXTRA time as debt to
+    // be refunded across the next N sleeps.
+    if (_politeSleepCompensationLeft === 0 &&
+        _politeSleepCounter % HUMAN_PAUSE_FREQUENCY === 0 &&
+        Math.random() < 0.5) {
+      const mult = HUMAN_PAUSE_MULT_MIN + Math.random() * (HUMAN_PAUSE_MULT_MAX - HUMAN_PAUSE_MULT_MIN);
+      const longPause = X * mult;
+      _politeSleepDebt += (longPause - delta);  // EXTRA time vs the sleep we would have done
+      _politeSleepCompensationLeft = HUMAN_PAUSE_COMPENSATION_REQUESTS;
+      delta = longPause;
+    } else if (_politeSleepCompensationLeft > 0 && _politeSleepDebt > 0) {
+      // Refund: shorten this sleep by debt/remaining so the spread is even.
+      const refund = _politeSleepDebt / _politeSleepCompensationLeft;
+      delta -= refund;
+      _politeSleepDebt -= refund;
+      _politeSleepCompensationLeft--;
+      if (delta < 50) delta = 50;  // tiny floor so we still yield
+    }
+
+    await sleep(delta);
+  }
+
+  // Fisher-Yates in-place shuffle. Used by 11-orchestrators.js to randomise
+  // the (subcat × condition) pass order per run (v0.7.14 anti-detection).
+  function fisherYatesShuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  // Pick a random element from an array. Used by 07-network.js to rotate
+  // Accept-Language / Accept headers per-request.
+  function pickRandom(arr) {
+    return arr[Math.floor(Math.random() * arr.length)];
   }
 
   // ============================================================================
@@ -607,10 +751,16 @@
       const t0 = Date.now();
       log(`fetchHtml attempt ${attempt}/${maxAttempts}: ${url}`);
       try {
+        // v0.7.14: rotate Accept and Accept-Language across small NZ-plausible
+        // pools per request so every fetch's header fingerprint isn't identical.
+        const headers = {
+          'Accept': pickRandom(ACCEPT_HEADER_POOL),
+          'Accept-Language': pickRandom(ACCEPT_LANGUAGE_POOL),
+        };
         const res = await fetch(url, {
           method: 'GET',
           credentials: 'include',
-          headers: { 'Accept': 'text/html,application/xhtml+xml' },
+          headers,
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -637,7 +787,14 @@
         }
         if (e && e.message === 'challenge-page-detected') throw e;
         if (attempt < maxAttempts) {
-          const backoff = clamp(800 * Math.pow(2, attempt), 1500, 30000) + Math.random() * 500;
+          // v0.7.14: multiplicative jitter (×0.7..×1.4) instead of an
+          // additive 0..500ms cap. E[multiplier] = 1.05 ≈ same expected
+          // wait as the previous "+0..500" added to a 1500..30000 base
+          // (which averaged ~250ms extra), but with proportionally-wider
+          // spread so retries from many parallel runs don't cluster.
+          const base = clamp(800 * Math.pow(2, attempt), 1500, 30000);
+          const mult = 0.7 + Math.random() * 0.7;
+          const backoff = base * mult;
           await sleep(backoff);
         }
       }
@@ -925,16 +1082,32 @@
     let consecutiveFailures = 0;
     let passIdx = 0;
 
+    // v0.7.14 anti-detection: shuffle the OUTER (subcat × condition) pass
+    // order per run so the request stream isn't deterministically top-down
+    // through CATEGORIES on every run. Pagination WITHIN a pass remains
+    // sequential — the v0.7.13 overflow short-circuit relies on that and
+    // each pass's seenInPass set is local to that pass anyway. Each pair
+    // is independent, so any ordering is safe. lastSubcatIndex is now the
+    // ORIGINAL CATEGORIES index of the most-recently-completed pass; not
+    // a position in the shuffled run order. There is no consumer of that
+    // value (no resume logic), so the change is observational only.
+    const passList = [];
+    for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let j = 0; j < conditionsToFetch.length; j++) {
+        passList.push({ sc: CATEGORIES[i], cond: conditionsToFetch[j], originalIndex: i });
+      }
+    }
+    fisherYatesShuffle(passList);
+    dbg('run', `Full Fetch pass order (shuffled): ${passList.map((p) => `${p.sc.slug}/${p.cond}`).join(', ')}`);
+
     try {
-      for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let pIdx = 0; pIdx < passList.length; pIdx++) {
         if (runState.abortRequested) { setProgress({ phase: 'aborted', message: 'Aborted by user.' }); return; }
-        const sc = CATEGORIES[i];
-        for (let j = 0; j < conditionsToFetch.length; j++) {
-          if (runState.abortRequested) { setProgress({ phase: 'aborted', message: 'Aborted by user.' }); return; }
-          const cond = conditionsToFetch[j];
+        const { sc, cond, originalIndex } = passList[pIdx];
+        {
           const passLabel = conditionsToFetch.length > 1 ? `${sc.name} (${cond})` : sc.name;
 
-          cur.lastSubcatIndex = i; cur.lastPage = 0;
+          cur.lastSubcatIndex = originalIndex; cur.lastPage = 0;
           GM_setValue(GM_KEY_CURRENT_RUN, JSON.stringify(cur));
           log(`>>> Pass ${passIdx + 1}/${totalPasses}: ${passLabel} (path=${sc.path})`);
           setProgress({ phase: 'fetching', subcat: passLabel, page: 1, doneSubcats: passIdx, message: `Fetching ${passLabel}…` });
@@ -1162,13 +1335,23 @@
     let resurfacedThisRun = 0;   // already-known listings still visible — flag cleared
     let passIdx = 0;
 
+    // v0.7.14: same anti-detection shuffle as runFullFetch — randomise the
+    // (subcat × condition) outer pass order per run. See runFullFetch for
+    // the rationale.
+    const passList = [];
+    for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let j = 0; j < conditionsToFetch.length; j++) {
+        passList.push({ sc: CATEGORIES[i], cond: conditionsToFetch[j] });
+      }
+    }
+    fisherYatesShuffle(passList);
+    dbg('run', `Quick Run pass order (shuffled): ${passList.map((p) => `${p.sc.slug}/${p.cond}`).join(', ')}`);
+
     try {
-      for (let i = 0; i < CATEGORIES.length; i++) {
+      for (let pIdx = 0; pIdx < passList.length; pIdx++) {
         if (runState.abortRequested) break;
-        const sc = CATEGORIES[i];
-        for (let j = 0; j < conditionsToFetch.length; j++) {
-          if (runState.abortRequested) break;
-          const cond = conditionsToFetch[j];
+        const { sc, cond } = passList[pIdx];
+        {
           const passLabel = conditionsToFetch.length > 1 ? `${sc.name} (${cond})` : sc.name;
           setProgress({ phase: 'fetching', subcat: passLabel, doneSubcats: passIdx, message: `Incremental: ${passLabel}` });
 
@@ -1571,11 +1754,16 @@
     // ---- Also emit listings-example.json (structural reference) ----
     // Same envelope as the full export, just a 160-listing cross-section
     // so the file shape stays current without git-committing the multi-MB
-    // full corpus. NOT wrapped in try/catch any more — if the sample build
-    // throws we want to see the stack, not a cryptic warning. The main
-    // listings.json is already safely on disk by this point regardless.
-    grp('sample', '--- emitting listings-example.json ---');
+    // full corpus. v0.7.14: gated behind the panel checkbox "Also export
+    // listings-example.json (sample)" — when unchecked, this whole block
+    // is skipped (no buildListingsSample call, no 1500ms gap sleep, no
+    // second downloadFile invocation). The full listings.json above is
+    // unconditional.
     let sampleEmitted = false;
+    if (!isExportSampleEnabled()) {
+      dbg('export', 'sample export disabled by panel checkbox — skipping listings-example.json');
+    } else {
+    grp('sample', '--- emitting listings-example.json ---');
     try {
       const sampleListings = buildListingsSample(listings);
       const sampleObj = {
@@ -1615,8 +1803,9 @@
     } finally {
       grpEnd(); // close 'sample' group
     }
+    }
 
-    log(`Exported ${listings.length} listings to ${filename} (${reason})${sampleEmitted ? ' + sample' : ' (sample failed)'}`);
+    log(`Exported ${listings.length} listings to ${filename} (${reason})${sampleEmitted ? ' + sample' : ''}`);
     const exportedAt = nowIso();
     await dbPut(STORE_META, { key: 'lastExportAt', value: exportedAt });
     try { localStorage.setItem('bgbf.lastExportAt', exportedAt); } catch (e) { /* ignore */ }
@@ -1722,6 +1911,8 @@
     #run-msg { font-size: 12px; color: #444; margin-bottom: 4px; min-height: 1.2em; }
     #run-progress { width: 100%; }
     #actions, #actions2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+    #options { display: flex; align-items: center; gap: 6px; padding: 6px 4px; margin-bottom: 6px; font-size: 12px; }
+    #options label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
     .btn { padding: 8px 10px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; }
     .btn:hover { background: #f5f5f5; }
     .btn.primary { background: #2980b9; color: #fff; border-color: #2980b9; }
@@ -1808,6 +1999,13 @@
               <span class="info-tip" data-tip="Wipes the entire local IndexedDB. Cannot be undone. The next run will start from a blank corpus.">?</span>
             </span>
           </section>
+          <section id="options">
+            <label>
+              <input type="checkbox" id="opt-export-sample" />
+              Also export listings-example.json (sample)
+            </label>
+            <span class="info-tip" data-tip="When ticked, also auto-downloads listings-example.json (a 160-row balanced sample) at the end of every run. Useful for sharing the schema without dumping the whole corpus.">?</span>
+          </section>
           <footer>
             JSON auto-downloads at end of every run. Drop into the static web app to browse.
           </footer>
@@ -1829,8 +2027,15 @@
   function wirePanel() {
     $('#fab').addEventListener('click', () => {
       const p = $('#panel'); p.hidden = !p.hidden;
-      if (!p.hidden) refreshPanelStatus();
+      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); }
     });
+    const exportSampleEl = $('#opt-export-sample');
+    if (exportSampleEl) {
+      exportSampleEl.addEventListener('change', () => {
+        try { GM_setValue(GM_KEY_EXPORT_SAMPLE, !!exportSampleEl.checked); }
+        catch (e) { warn('persist exportSampleEnabled failed', e); }
+      });
+    }
     $('#panel-close').addEventListener('click', () => { $('#panel').hidden = true; });
     $('#act-full').addEventListener('click', () => runFullFetch());
     $('#act-incremental').addEventListener('click', () => runIncrementalFetch());
@@ -1920,6 +2125,26 @@
       el.addEventListener('focus', () => place(el));
       el.addEventListener('blur',  hide);
     });
+  }
+
+  // v0.7.14: read the persisted "Also export listings-example.json" toggle
+  // and reflect it in the checkbox each time the panel is opened. Source of
+  // truth is GM_getValue(GM_KEY_EXPORT_SAMPLE); default false.
+  function hydrateExportSampleCheckbox() {
+    if (!uiShadow) return;
+    const cb = uiShadow.getElementById('opt-export-sample');
+    if (!cb) return;
+    let stored = false;
+    try { stored = !!GM_getValue(GM_KEY_EXPORT_SAMPLE, false); } catch (e) { /* default false */ }
+    cb.checked = stored;
+  }
+
+  // Read-only accessor used by 13-export.js to decide whether to emit
+  // listings-example.json. Hits GM storage directly so it works whether or
+  // not the panel has been opened this session.
+  function isExportSampleEnabled() {
+    try { return !!GM_getValue(GM_KEY_EXPORT_SAMPLE, false); }
+    catch (e) { return false; }
   }
 
   async function refreshPanelStatus() {

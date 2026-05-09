@@ -12,10 +12,16 @@
       const t0 = Date.now();
       log(`fetchHtml attempt ${attempt}/${maxAttempts}: ${url}`);
       try {
+        // v0.7.14: rotate Accept and Accept-Language across small NZ-plausible
+        // pools per request so every fetch's header fingerprint isn't identical.
+        const headers = {
+          'Accept': pickRandom(ACCEPT_HEADER_POOL),
+          'Accept-Language': pickRandom(ACCEPT_LANGUAGE_POOL),
+        };
         const res = await fetch(url, {
           method: 'GET',
           credentials: 'include',
-          headers: { 'Accept': 'text/html,application/xhtml+xml' },
+          headers,
           cache: 'no-store',
           signal: controller.signal,
         });
@@ -42,7 +48,14 @@
         }
         if (e && e.message === 'challenge-page-detected') throw e;
         if (attempt < maxAttempts) {
-          const backoff = clamp(800 * Math.pow(2, attempt), 1500, 30000) + Math.random() * 500;
+          // v0.7.14: multiplicative jitter (×0.7..×1.4) instead of an
+          // additive 0..500ms cap. E[multiplier] = 1.05 ≈ same expected
+          // wait as the previous "+0..500" added to a 1500..30000 base
+          // (which averaged ~250ms extra), but with proportionally-wider
+          // spread so retries from many parallel runs don't cluster.
+          const base = clamp(800 * Math.pow(2, attempt), 1500, 30000);
+          const mult = 0.7 + Math.random() * 0.7;
+          const backoff = base * mult;
           await sleep(backoff);
         }
       }

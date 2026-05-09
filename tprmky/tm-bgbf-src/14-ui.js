@@ -54,6 +54,8 @@
     #run-msg { font-size: 12px; color: #444; margin-bottom: 4px; min-height: 1.2em; }
     #run-progress { width: 100%; }
     #actions, #actions2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+    #options { display: flex; align-items: center; gap: 6px; padding: 6px 4px; margin-bottom: 6px; font-size: 12px; }
+    #options label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
     .btn { padding: 8px 10px; border: 1px solid #ccc; background: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; }
     .btn:hover { background: #f5f5f5; }
     .btn.primary { background: #2980b9; color: #fff; border-color: #2980b9; }
@@ -140,6 +142,13 @@
               <span class="info-tip" data-tip="Wipes the entire local IndexedDB. Cannot be undone. The next run will start from a blank corpus.">?</span>
             </span>
           </section>
+          <section id="options">
+            <label>
+              <input type="checkbox" id="opt-export-sample" />
+              Also export listings-example.json (sample)
+            </label>
+            <span class="info-tip" data-tip="When ticked, also auto-downloads listings-example.json (a 160-row balanced sample) at the end of every run. Useful for sharing the schema without dumping the whole corpus.">?</span>
+          </section>
           <footer>
             JSON auto-downloads at end of every run. Drop into the static web app to browse.
           </footer>
@@ -161,8 +170,15 @@
   function wirePanel() {
     $('#fab').addEventListener('click', () => {
       const p = $('#panel'); p.hidden = !p.hidden;
-      if (!p.hidden) refreshPanelStatus();
+      if (!p.hidden) { refreshPanelStatus(); hydrateExportSampleCheckbox(); }
     });
+    const exportSampleEl = $('#opt-export-sample');
+    if (exportSampleEl) {
+      exportSampleEl.addEventListener('change', () => {
+        try { GM_setValue(GM_KEY_EXPORT_SAMPLE, !!exportSampleEl.checked); }
+        catch (e) { warn('persist exportSampleEnabled failed', e); }
+      });
+    }
     $('#panel-close').addEventListener('click', () => { $('#panel').hidden = true; });
     $('#act-full').addEventListener('click', () => runFullFetch());
     $('#act-incremental').addEventListener('click', () => runIncrementalFetch());
@@ -252,6 +268,26 @@
       el.addEventListener('focus', () => place(el));
       el.addEventListener('blur',  hide);
     });
+  }
+
+  // v0.7.14: read the persisted "Also export listings-example.json" toggle
+  // and reflect it in the checkbox each time the panel is opened. Source of
+  // truth is GM_getValue(GM_KEY_EXPORT_SAMPLE); default false.
+  function hydrateExportSampleCheckbox() {
+    if (!uiShadow) return;
+    const cb = uiShadow.getElementById('opt-export-sample');
+    if (!cb) return;
+    let stored = false;
+    try { stored = !!GM_getValue(GM_KEY_EXPORT_SAMPLE, false); } catch (e) { /* default false */ }
+    cb.checked = stored;
+  }
+
+  // Read-only accessor used by 13-export.js to decide whether to emit
+  // listings-example.json. Hits GM storage directly so it works whether or
+  // not the panel has been opened this session.
+  function isExportSampleEnabled() {
+    try { return !!GM_getValue(GM_KEY_EXPORT_SAMPLE, false); }
+    catch (e) { return false; }
   }
 
   async function refreshPanelStatus() {
