@@ -1,5 +1,5 @@
 
-## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.12)
+## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.13)
 
 Runs at `https://www.trademe.co.nz/*`. ~2060 lines. Pipeline: menu click →
 build URL list (8 categories × 2 conditions = 16 passes) → polite fetch
@@ -74,6 +74,23 @@ more. Every active listing on TM has its `lastSeenAt` refreshed on every
 run, so anything that hasn't been refreshed in 14 days is overwhelmingly
 likely to be gone from TM. Quick Run runtime is therefore comparable to
 Full Fetch (~5–10 minutes for the full 16-pass crawl).
+
+**v0.7.13 overflow short-circuit.** Trade Me re-renders the last real
+page's listings (or a stale shell) for any page number past the real
+end — same ~739 KB body returned for pages 30+ when the real content
+ends at page 29, etc. The `if (!listings.length) break;` end-of-list
+test does NOT trip on these because TM still hands back a non-empty
+listings array. To avoid wasting ~20 fetches per overflowed pass,
+both `runQuickRun` and `runFullFetch` track a per-pass `seenInPass`
+set and break out of the page loop when **two consecutive pages**
+contain only listing IDs already stamped earlier in the same pass.
+Two pages, not one, to absorb a transient TM hiccup. The reap
+invariant is preserved: a page is only counted as "all repeats" if
+every one of its listings was already `lastSeenAt`-stamped on a
+previous page of THIS pass — so no actually-active listing goes
+un-stamped, and the post-run stale reap remains safe. The faster
+`if (!listings.length) break;` path is preserved as the primary
+end-of-pagination signal for cases where TM does the right thing.
 
 The bias is intentionally aggressive: a few legitimate listings buried
 deep in pagination that we happened to miss is preferable to dead links

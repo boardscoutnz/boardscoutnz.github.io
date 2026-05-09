@@ -56,6 +56,12 @@
           let pagesTotalEstimate = null;
           const seenInPass = new Set();
           let pageSize = null;
+          // v0.7.13: 2-consecutive all-repeat-page short-circuit for the
+          // overflow case where TM keeps returning the last real page's
+          // listings for page numbers past the real end. See Quick Run
+          // for the rationale; reap invariant is preserved because every
+          // listing on a page we DO process gets its lastSeenAt stamped.
+          let consecutiveAllRepeats = 0;
 
           while (true) {
             if (runState.abortRequested) break;
@@ -74,69 +80,91 @@
             }
             consecutiveFailures = 0;
 
-            const { listings, totalCount, source } = extractListingsFromPage(html);
-            if (!listings.length) {
-              if (page === 1) warn(`No listings on first page of ${sc.slug} (${cond}) via ${source}`);
-              break;
-            }
-            if (page === 1 && totalCount && listings.length) {
-              pageSize = listings.length;
-              pagesTotalEstimate = Math.ceil(totalCount / pageSize);
-            }
-
-            const normalised = listings
-              .map((r) => normaliseListing(r, { subcat: sc.slug, condition: cond }))
-              .filter(Boolean);
-
-            let newOnThisPage = 0;
-            for (const n of normalised) {
-              if (!seenInPass.has(n.listingId)) {
-                seenInPass.add(n.listingId);
-                seenListingIds.add(n.listingId);
-                newOnThisPage++;
+            // v0.7.13: wrap the whole inner-loop body so any silent
+            // rejection between fetchHtml and the next iteration
+            // surfaces in the console instead of locking the UI.
+            // Diagnostic-only; remove once the runFullFetch hang is
+            // root-caused. See Issue 1 in commit message.
+            try {
+              const { listings, totalCount, source } = extractListingsFromPage(html);
+              dbg('run', `${passLabel} p${page}: extractListingsFromPage returned ${listings.length} listings (totalCount=${totalCount}, source=${source})`);
+              if (!listings.length) {
+                if (page === 1) warn(`No listings on first page of ${sc.slug} (${cond}) via ${source}`);
+                break;
               }
+              if (page === 1 && totalCount && listings.length) {
+                pageSize = listings.length;
+                pagesTotalEstimate = Math.ceil(totalCount / pageSize);
+              }
+
+              const normalised = listings
+                .map((r) => normaliseListing(r, { subcat: sc.slug, condition: cond }))
+                .filter(Boolean);
+              dbg('run', `${passLabel} p${page}: normalised ${normalised.length} of ${listings.length} rows`);
+
+              const pageListingIds = new Set(normalised.map((n) => n.listingId));
+              let alreadySeenCount = 0;
+              for (const id of pageListingIds) if (seenInPass.has(id)) alreadySeenCount++;
+              const allRepeats = pageListingIds.size > 0 && alreadySeenCount === pageListingIds.size;
+              if (allRepeats) consecutiveAllRepeats++; else consecutiveAllRepeats = 0;
+
+              let newOnThisPage = 0;
+              for (const n of normalised) {
+                if (!seenInPass.has(n.listingId)) {
+                  seenInPass.add(n.listingId);
+                  seenListingIds.add(n.listingId);
+                  newOnThisPage++;
+                }
+              }
+
+              const merged = [];
+              const stamp = nowIso();
+              for (const n of normalised) {
+                const existing = await dbGet(STORE_LISTINGS, n.listingId);
+                if (existing) merged.push({ ...existing, ...n, lastSeenAt: stamp });
+                else merged.push({ ...n, lastSeenAt: stamp });
+              }
+              await dbBulkPut(STORE_LISTINGS, merged);
+              dbg('run', `${passLabel} p${page}: dbBulkPut ${merged.length} listings resolved`);
+
+              // v0.7.8: feed the per-pass scrape set + running tail
+              // sentinel for the next Quick Run's expiration baseline.
+              // Mirrors lines ~1217-1226 of runIncrementalFetch.
+              const pk = passKeyOf(sc, cond);
+              if (!currSeenByPass[pk]) currSeenByPass[pk] = new Set();
+              for (const m of merged) {
+                currSeenByPass[pk].add(m.listingId);
+                tailByPass[pk] = { listingId: m.listingId, capturedAt: nowIso() };
+              }
+              dbg('run', `${passLabel} p${page}: currSeenByPass/tailByPass write done (pk=${pk}, set size=${currSeenByPass[pk].size})`);
+
+              setProgress({
+                page,
+                listingsAccumulated: runState.progress.listingsAccumulated + newOnThisPage,
+                message: `${passLabel} page ${page}: +${newOnThisPage} new (source=${source})${pagesTotalEstimate ? ` of ~${pagesTotalEstimate} pages` : ''}`,
+              });
+              dbg('run', `${passLabel} p${page}: setProgress done (newOnThisPage=${newOnThisPage}, allRepeats=${allRepeats}, consecutiveAllRepeats=${consecutiveAllRepeats})`);
+
+              cur.lastPage = page;
+              GM_setValue(GM_KEY_CURRENT_RUN, JSON.stringify(cur));
+
+              if (consecutiveAllRepeats >= 2) {
+                dbg('run', `${passLabel} page ${page}: ${consecutiveAllRepeats} consecutive all-repeat pages — assuming overflow, ending pass`);
+                break;
+              }
+              if (pagesTotalEstimate && page >= pagesTotalEstimate) break;
+              if (totalCount && seenInPass.size >= totalCount) break;
+
+              page++;
+              const cap = settings.get().maxPagesPerSubcat || 60;
+              if (page > cap) { warn(`safety cap: ${cap} pages on ${sc.slug} (${cond})`); break; }
+              dbg('run', `${passLabel}: about to politeSleep before page ${page}`);
+              await politeSleep();
+              dbg('run', `${passLabel}: politeSleep returned, advancing to page ${page}`);
+            } catch (loopErr) {
+              err('run', `${passLabel} p${page}: unhandled error in page-loop body:`, loopErr && loopErr.message, loopErr);
+              throw loopErr;
             }
-            if (newOnThisPage === 0) {
-              log(`${sc.slug} (${cond}) page ${page}: ${listings.length} listings but 0 new — assuming end of pagination`);
-              setProgress({ page, message: `${passLabel} page ${page}: end reached (no new listings)` });
-              break;
-            }
-
-            const merged = [];
-            const stamp = nowIso();
-            for (const n of normalised) {
-              const existing = await dbGet(STORE_LISTINGS, n.listingId);
-              if (existing) merged.push({ ...existing, ...n, lastSeenAt: stamp });
-              else merged.push({ ...n, lastSeenAt: stamp });
-            }
-            await dbBulkPut(STORE_LISTINGS, merged);
-
-            // v0.7.8: feed the per-pass scrape set + running tail
-            // sentinel for the next Quick Run's expiration baseline.
-            // Mirrors lines ~1217-1226 of runIncrementalFetch.
-            const pk = passKeyOf(sc, cond);
-            if (!currSeenByPass[pk]) currSeenByPass[pk] = new Set();
-            for (const m of merged) {
-              currSeenByPass[pk].add(m.listingId);
-              tailByPass[pk] = { listingId: m.listingId, capturedAt: nowIso() };
-            }
-
-            setProgress({
-              page,
-              listingsAccumulated: runState.progress.listingsAccumulated + newOnThisPage,
-              message: `${passLabel} page ${page}: +${newOnThisPage} new (source=${source})${pagesTotalEstimate ? ` of ~${pagesTotalEstimate} pages` : ''}`,
-            });
-
-            cur.lastPage = page;
-            GM_setValue(GM_KEY_CURRENT_RUN, JSON.stringify(cur));
-
-            if (pagesTotalEstimate && page >= pagesTotalEstimate) break;
-            if (totalCount && seenInPass.size >= totalCount) break;
-
-            page++;
-            const cap = settings.get().maxPagesPerSubcat || 60;
-            if (page > cap) { warn(`safety cap: ${cap} pages on ${sc.slug} (${cond})`); break; }
-            await politeSleep();
           }
 
           passIdx++;
@@ -263,6 +291,14 @@
           // totalCount because Quick Run had no use for it.
           let pagesTotalEstimate = null;
           let pageSize = null;
+          // v0.7.13: track listing IDs we've already lastSeenAt-stamped
+          // on this pass so we can detect the TM "overflow" case where
+          // pages past the real end re-render the last real page's
+          // listings. Two consecutive all-repeat pages → break. Reap
+          // invariant is preserved because every listing on a page we
+          // process IS stamped (we only short-circuit AFTER stamping).
+          const seenInPass = new Set();
+          let consecutiveAllRepeats = 0;
           while (!stop) {
             if (runState.abortRequested) break;
             const url = categoryUrl(sc.path, page, { sortOrder: 'expirydesc', condition: cond });
@@ -276,12 +312,21 @@
               pagesTotalEstimate = Math.ceil(totalCount / pageSize);
             }
 
+            const normalised = listings
+              .map((raw) => normaliseListing(raw, { subcat: sc.slug, condition: cond }))
+              .filter(Boolean);
+
+            const pageListingIds = new Set(normalised.map((n) => n.listingId));
+            let alreadySeenCount = 0;
+            for (const id of pageListingIds) if (seenInPass.has(id)) alreadySeenCount++;
+            const allRepeats = pageListingIds.size > 0 && alreadySeenCount === pageListingIds.size;
+            if (allRepeats) consecutiveAllRepeats++; else consecutiveAllRepeats = 0;
+
             let newCount = 0;
             const recs = [];
             const stamp = nowIso();
-            for (const raw of listings) {
-              const n = normaliseListing(raw, { subcat: sc.slug, condition: cond });
-              if (!n) continue;
+            for (const n of normalised) {
+              seenInPass.add(n.listingId);
               if (knownIds.has(n.listingId)) {
                 // Already in DB. isNewListing was bulk-cleared on every
                 // record at run start, so the merge here refreshes
@@ -308,7 +353,12 @@
             // refreshed — that's what makes the post-run reap able to
             // identify expired listings reliably. Loop now exits via the
             // `if (!listings.length) break;` above (true end of
-            // pagination) or the safety cap below.
+            // pagination), the v0.7.13 all-repeat short-circuit below,
+            // or the safety cap below.
+            if (consecutiveAllRepeats >= 2) {
+              dbg('run', `${passLabel} page ${page}: ${consecutiveAllRepeats} consecutive all-repeat pages — assuming overflow, ending pass`);
+              break;
+            }
             page++;
             if (page > 50) break;
             await politeSleep();
