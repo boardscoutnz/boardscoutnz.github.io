@@ -12,7 +12,6 @@
   shrink and then re-stack the sidebar below the table.
 - The "NEW listings only" button is a full-width sidebar control at
   the very top of the filter column. Inactive = neutral grey; active = red
-  to match the inline NEW pills on title cells. Label flips to "🆕 Showing
-  NEW only — click to show all" when active.
+  to match the inline NEW pills on title cells. Label flips to "Show ALL Listings" when active.
 
 ---
