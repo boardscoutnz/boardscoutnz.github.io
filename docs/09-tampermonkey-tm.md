@@ -1,5 +1,5 @@
 
-## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.15)
+## Tampermonkey companion 1: TM collector (`tm-bgbf.user.js` v0.7.16)
 
 Runs at `https://www.trademe.co.nz/*`. ~2560 lines. Pipeline: menu click →
 build URL list (8 categories × 2 conditions = 16 passes, **shuffled per
@@ -131,13 +131,6 @@ silently never ran because `extractListingsFromPage` returns
 the tail walk needed that estimate to know where to start). With the
 lastSeenAt approach, pagination depth is irrelevant.
 
-**Cosmetic loose end:** `runFullFetch` still declares and writes
-`currSeenByPass` / `tailByPass` and persists them to
-`currSeenByPass.v1` / `tailByPass.v1` in the meta store. This is
-harmless dead code now (no reader anywhere) and can be pruned in a
-future pass. The two IndexedDB rows can be deleted by hand from
-DevTools if desired.
-
 ### Sampler
 
 `buildListingsSample` collects up to 15 base-game + 5 expansion rows per
@@ -151,7 +144,9 @@ Two stores: `STORE_LISTINGS` (keyPath `listingId`, single index on
 `subcat`) and `STORE_META`. The legacy `sellers` and `overrides` stores
 have been entirely dropped. `STORE_META` keys actively used:
 `lastFetchAt`, `lastRunSummary`, `lastExportAt`. (`currSeenByPass.v1`
-and `tailByPass.v1` are written by Full Fetch but never read — see
-"Cosmetic loose end" above.)
+and `tailByPass.v1` are legacy keys that may still exist in IndexedDB
+on browsers that ran the userscript prior to v0.7.16; they are no
+longer written or read by the userscript and can be deleted by hand
+from DevTools if desired.)
 
 ---

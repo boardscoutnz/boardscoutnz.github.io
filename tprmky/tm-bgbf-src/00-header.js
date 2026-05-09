@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Trade Me Board Games Bulk Fetcher (Collector)
 // @namespace    https://github.com/yourname/tm-bgbf
-// @version      0.7.15
+// @version      0.7.16
 // @description  Collect-only edition. Bulk-fetch live Card-game and selected Board-game listings from Trade Me, purge listings whose title matches the blacklist (accessory keywords now folded into the blacklist), tag expansions vs base games, flag freshly-seen listings, and AUTO-EXPORT a JSON file at the end of every run for the standalone web dashboard to consume.
 // @author       you
 // @match        https://www.trademe.co.nz/*
