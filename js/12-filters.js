@@ -121,6 +121,10 @@ function wireFilterControls() {
     });
   }
 
+  // v1.6.20: dual-handle rating slider lives in its own module to keep
+  // 12-filters.js under the 500-line cap.
+  if (typeof wireRatingSlider === 'function') wireRatingSlider();
+
   dbg('init', 'wireFilterControls: all filter event listeners attached');
 }
 
@@ -178,6 +182,7 @@ function passesFilters(row, opts = {}) {
   if (filters.bggMaxRank   != null && (row.bgg_rank == null || row.bgg_rank > filters.bggMaxRank)) return reject('bggMaxRank');
   if (filters.bggMaxWeight != null && (row.bgg_weight == null || row.bgg_weight > filters.bggMaxWeight)) return reject('bggMaxWeight');
   if (filters.bggMinRating != null && (row.bgg_average == null || row.bgg_average < filters.bggMinRating)) return reject('bggMinRating');
+  if (filters.bggMaxRating != null && (row.bgg_average == null || row.bgg_average > filters.bggMaxRating)) return reject('bggMaxRating');
   if (filters.bggMinPlayers != null) {
     if (row.bgg_max_players == null || row.bgg_max_players < filters.bggMinPlayers) return reject('bggMinPlayers');
     if (row.bgg_min_players != null && row.bgg_min_players > filters.bggMinPlayers) return reject('bggMinPlayers');
@@ -317,6 +322,7 @@ function resetFilters() {
   filters.bggMaxRank = null;
   filters.bggMaxWeight = null;
   filters.bggMinRating = null;
+  filters.bggMaxRating = null;
   filters.bggMinPlayers = null;
   filters.bggMaxTime = null;
 
@@ -333,6 +339,9 @@ function resetFilters() {
   document.getElementById('f-bgg-rating').value = '';
   document.getElementById('f-bgg-players').value = '';
   document.getElementById('f-bgg-time').value = '';
+
+  // v1.6.20: rating slider snap-back is owned by 16-rating-slider.js.
+  if (typeof resetRatingSlider === 'function') resetRatingSlider();
 
   dbg('filter', 'state AFTER reset:', filtersSnapshot());
   dbgGroupEnd('filter');
@@ -424,7 +433,7 @@ function applyFilters() {
     viewMode: 0, newListingsOnly: 0, condition: 0, search: 0,
     priceMin: 0, priceMax: 0, region: 0, subcat: 0,
     unranked: 0, bggMaxRank: 0, bggMaxWeight: 0, bggMinRating: 0,
-    bggMinPlayers: 0, bggMaxTime: 0,
+    bggMaxRating: 0, bggMinPlayers: 0, bggMaxTime: 0,
   };
 
   // v1.6.13: filter application is now wrapped in

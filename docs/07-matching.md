@@ -22,7 +22,12 @@ The bulk of real matches go through here. Three pieces:
    — keeps generic words ("game", "the") out, keeps specific ones in
    ("cartographers", "pandemic").
 3. **Containment + scoring**:
-   - Multi-token candidates: every BGG token must appear in the listing.
+   - Multi-token candidates: every BGG token instance must be matched by a
+     distinct listing-token instance (multi-set / "bag" containment), so e.g.
+     a BGG entry of "Hop! Hop! Hop!" no longer matches a listing of "Pop n
+     Hop". Set semantics let three "hop" tokens all collide on a single
+     listing "hop"; bag semantics correctly require three distinct ones.
+     v1.6.20.
    - Single-token candidates (e.g. "Cartographers"): must additionally sit
      at **position 0** of the listing.
    - `findPositionInListing(bggTokens, listingTokens)` returns
