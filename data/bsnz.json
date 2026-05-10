@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "generated_at": "1970-01-01T00:00:00Z",
-  "bgg_csv_dump_fetched_at": null,
+  "bgg_corpus_fetched_at": null,
   "bgg_api_enrichment_run": false,
   "stats": {
     "tm_listing_count": 0,

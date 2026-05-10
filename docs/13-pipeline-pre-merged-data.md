@@ -1,21 +1,21 @@
-# 13 — Pipeline pre-merged data file
+## Pipeline pre-merged data
 
-## Purpose
+`data/bsnz.json` is the single source the static site reads (post-cutover —
+see implementation-plan Step 8) to render the Tabulator grid. It is a fully
+merged, pre-enriched snapshot of every Trade Me board-game listing joined
+with its BoardGameGeek metadata, written by `tprmky/bsnz-pipeline.user.js`
+(built from `tprmky/bsnz-pipeline-src/`) on each manual pipeline run and
+committed via the GitHub Contents API. The site does no merging or BGG
+enrichment at render time.
 
-`data/bsnz.json` is the new pipeline's pre-merged data file: a single,
-fully-enriched JSON document written by `tprmky/bsnz-pipeline.user.js` and
-read by the static site (post-Step-8) as its sole input. It replaces the
-runtime join the site currently performs across `data/listings.json` and
-`data/bgg-rankings.json` — the merge is moved upstream into the userscript so
-the page can render immediately without doing matching work in the browser.
+### Schema
 
-## Schema (reference)
 
 ```json
 {
   "schema_version": "1.0.0",
   "generated_at": "2026-05-10T14:30:00Z",
-  "bgg_csv_dump_fetched_at": "2026-05-10T14:25:00Z",
+  "bgg_corpus_fetched_at": "2026-05-10T14:25:00Z",
   "bgg_api_enrichment_run": true,
   "stats": {
     "tm_listing_count": 247,
@@ -56,133 +56,107 @@ the page can render immediately without doing matching work in the browser.
 }
 ```
 
-This schema supersedes the older example in the master plan; the older
-draft included TM and BGG fields that have been removed (see below).
 
-## Field documentation
+### Top-level fields
 
-### Top-level
+- `schema_version` — semver string. The site reader refuses to render an
+  incompatible MAJOR.
+- `generated_at` — ISO 8601 UTC timestamp of this pipeline run.
+- `bgg_corpus_fetched_at` — ISO 8601 UTC timestamp of when the in-userscript
+  BGG corpus was last refreshed from the BGG ranks dump (either this run, or
+  a recent run whose cached corpus was reused). Null on the empty placeholder.
+- `bgg_api_enrichment_run` — `true` if this run hit the BGG XML `/thing` API
+  to refresh `bgg_weight` / `bgg_min_players` / `bgg_max_players` /
+  `bgg_playing_time` (and the optional best-effort fields); `false` if those
+  values were carried over from the previous `data/bsnz.json` (or are null
+  because no prior value exists).
+- `stats` — aggregate counters for the run.
 
-| Field | Type | Notes |
-|---|---|---|
-| `schema_version` | string (semver) | Reader refuses to render incompatible MAJOR. |
-| `generated_at` | ISO 8601 UTC | Timestamp of this pipeline run. |
-| `bgg_csv_dump_fetched_at` | ISO 8601 UTC \| null | Timestamp of the most recent BGG ranks CSV download. Null on a fresh placeholder. |
-| `bgg_api_enrichment_run` | boolean | True if this run hit the BGG XML `/thing` API to refresh weight / players / playing_time fields; false if those values were carried over from the previous `data/bsnz.json` (or are null because no prior value existed). |
-| `stats` | object | Aggregate counters for the run — see below. |
+### Per-listing fields, by source
 
-`stats` keys: `tm_listing_count`, `bgg_match_count`,
-`manual_override_count`, `unmatched_count`, `bgg_api_enriched_count`.
-
-### Per-listing — TM-sourced (Trade Me listing-card scrape)
+**TM-sourced** (Trade Me listing-card scrape; populated for matched and
+unmatched listings alike):
 
 `tm_id`, `tm_url`, `tm_title`, `tm_price_nzd`, `tm_buy_now_nzd`,
 `tm_condition`, `tm_location`.
 
-These are the only TM fields the userscript reliably extracts. Older drafts
-of the schema included `tm_seller`, `tm_listed_at`, `tm_closes_at`, and
-`tm_image_url`; these have been removed because the listing-card scrape does
-not reliably yield them.
+These are the only TM fields the userscript reliably extracts. Earlier drafts
+of this schema included `tm_seller` / `tm_listed_at` / `tm_closes_at` /
+`tm_image_url` — those are explicitly out of scope.
 
-### Per-listing — BGG-CSV-sourced
+**BGG-CSV-sourced** (read from the BGG ranks CSV dump fetched in-userscript
+by `03-bgg-corpus.js`; populated whenever a match exists; refreshed when the
+`GM_setValue` cache is older than the configured TTL or the user clicks
+Force-refresh):
 
-Always populated when matched; refreshed every run.
+`bgg_id` (int, BGG's primary key), `bgg_name` (BGG primary name), `bgg_rank`
+(overall rank), `bgg_rating_average` (BGG's displayed weighted-average
+rating).
 
-- `bgg_id` (int, BGG's primary key)
-- `bgg_name` (BGG primary name)
-- `bgg_rank` (overall rank)
-- `bgg_rating_average` (BGG's displayed weighted-average rating)
+**Match metadata**:
 
-Source: <https://boardgamegeek.com/data_dumps/bg_ranks>. No API calls
-required for these fields.
+- `bgg_match_method` — one of `"exact_match" | "fuzzy_match" |
+  "manual_override" | "unmatched"`. (Earlier proposed values `"exact_search"`
+  and `"cached"` are dropped: matching now happens against the local
+  CSV-derived corpus rather than against an API search endpoint.)
+- `bgg_match_confidence` — `1.0` for exact / manual; `<1.0` for fuzzy; `null`
+  for unmatched.
 
-### Per-listing — match metadata
+**BGG-API-conditional** (populated only when `enable_bgg_api_enrichment` is
+checked; otherwise carried over from the previous `data/bsnz.json` keyed by
+`bgg_id`, or null if no prior value exists):
 
-- `bgg_match_method`: one of
-  `"exact_match"` | `"fuzzy_match"` | `"manual_override"` | `"unmatched"`.
-  The earlier proposed values `"exact_search"` and `"cached"` are dropped:
-  matching now happens against the local CSV corpus rather than against an
-  API search endpoint.
-- `bgg_match_confidence`: `1.0` for exact / manual; `<1.0` for fuzzy;
-  `null` for unmatched.
+`bgg_weight` (BGG game complexity, 1.0–5.0), `bgg_min_players`,
+`bgg_max_players`, `bgg_playing_time` (minutes).
 
-### Per-listing — BGG-API-conditional
+`bgg_api_enriched_at` — ISO 8601 UTC timestamp at which these fields were
+last refreshed for this `bgg_id`. Null if never enriched.
 
-Populated only when the `enable_bgg_api_enrichment` setting is checked;
-otherwise carried over from the previous `data/bsnz.json` keyed by `bgg_id`,
-or `null` if no prior value exists.
+**BGG-API best-effort** (stored only when the same `/thing` response that
+populated the conditional fields above also returns them; otherwise
+null/empty):
 
-- `bgg_weight` (BGG game complexity, 1.0–5.0)
-- `bgg_min_players`
-- `bgg_max_players`
-- `bgg_playing_time` (minutes)
-- `bgg_api_enriched_at`: ISO 8601 UTC timestamp at which these four fields
-  were last refreshed for this `bgg_id`. Null if never enriched.
+`bgg_min_age`, `bgg_categories` (array of strings), `bgg_mechanics` (array of
+strings).
 
-### Per-listing — BGG-API best-effort
+Listings with `bgg_match_method: "unmatched"` have `bgg_id: null` and all
+`bgg_*` fields null/empty; the static site still renders them with their
+`tm_*` fields populated.
 
-Stored only when the same `/thing` response that populated the conditional
-fields above also returns them; otherwise null / empty arrays.
+### Schema versioning
 
-- `bgg_min_age`
-- `bgg_categories` (array of strings)
-- `bgg_mechanics` (array of strings)
+Any breaking change to the listing record shape MUST bump `schema_version`
+(semver: MAJOR for breaking, MINOR for additive, PATCH for clarifications).
+The reader (the static site, post-cutover) reads `schema_version` and
+refuses to render incompatible major versions.
 
-### Unmatched listings
+### Update cadence
 
-Listings with `bgg_match_method` `"unmatched"` have `bgg_id` null and all
-`bgg_*` fields null / empty arrays; the static site still renders these
-with their `tm_*` fields.
+Written by `tprmky/bsnz-pipeline.user.js`, run manually by the user. Not on a
+schedule.
 
-## Schema versioning rule
+The matching corpus (BGG ranks dump) is fetched directly from BGG by the
+pipeline userscript on each run, then cached in `GM_setValue` with a
+configurable TTL (default 7 days, matching BGG's upstream weekly refresh
+cadence). The user can force a corpus refresh via the settings dialog.
 
-Any breaking change to the listing record shape MUST bump
-`schema_version` (semver):
+The optional BGG XML `/thing` API enrichment runs only when the user has the
+"Enable BGG API enrichment" setting checked. When unchecked, the conditional
+fields carry over from the previous `data/bsnz.json`.
 
-- MAJOR for breaking changes,
-- MINOR for additive changes,
-- PATCH for clarifications.
+### File location
 
-The reader (post-Step-8) reads `schema_version` and refuses to render
-incompatible major versions.
+`data/bsnz.json` — committed to the repo via the GitHub Contents API by the
+pipeline userscript. Fetched by the static site at render time as a single
+file.
 
-## Update cadence
+### Relationship to existing data files
 
-Written by `tprmky/bsnz-pipeline.user.js`, which the user runs manually —
-not on a schedule. The BGG ranks CSV upstream refreshes weekly; the
-userscript caches it locally to avoid unnecessary re-downloads. The
-cache-cadence config arrives in Step 3 of the implementation plan.
-
-## Sourcing summary
-
-TM fields come from scraping the authenticated Trade Me board-games
-category in the user's browser tab. BGG-CSV fields (`bgg_id`, `bgg_name`,
-`bgg_rank`, `bgg_rating_average`) come from the BGG ranks data dump and are
-the primary BGG matching corpus — no API calls are needed for these.
-BGG-API fields (`bgg_weight`, players, `bgg_playing_time`, plus the
-optional `bgg_min_age` / `bgg_categories` / `bgg_mechanics`) come from the
-BGG XML `/thing` endpoint ONLY when the user has
-`enable_bgg_api_enrichment` checked. When unchecked, those values are
-carried over from the previous `data/bsnz.json` keyed by `bgg_id`; this
-minimises load on the BGG API while keeping the per-listing record
-complete from the static site's point of view.
-
-## File location
-
-`data/bsnz.json` (committed to the repo).
-
-## Relationship to existing data files
-
-Current contents of `data/`:
-
-- `bgg-rankings.json` — produced by `tprmky/bgg-ranks-exporter.user.js`;
-  the BGG ranks corpus the static site currently joins against at runtime.
-- `bgg-rankings-example.json` — small sample for documentation / examples.
-- `listings.json` — produced by `tprmky/tm-bgbf.user.js`; the TM listings
-  corpus the static site currently joins against at runtime.
-- `listings-example.json` — small sample for documentation / examples.
-
-Step 9 of the implementation plan will deprecate or archive whichever of
-the above are superseded by `data/bsnz.json` once the static site has been
-switched (Step 8) to read the pre-merged file. Until then, both the old
-files and the new `data/bsnz.json` placeholder coexist.
+- `data/listings.json` — produced by `tprmky/tm-bgbf.user.js` (the legacy TM
+  scraper). Deprecated by this pipeline; archived in Step 9 of the
+  implementation plan.
+- `data/bgg-rankings.json` — produced by `tprmky/bgg-ranks-exporter.user.js`.
+  Deprecated by this pipeline (which now refreshes the BGG corpus
+  in-userscript on every run via fflate-decompressed access to BGG's CSV
+  dump); both the exporter and this file are archived in Step 9 of the
+  implementation plan.
