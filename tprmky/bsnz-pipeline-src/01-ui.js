@@ -180,17 +180,87 @@
   window.bsnzUi = Object.assign(bsnzUi, { setPhase, setProgress, setRunning, renderStats });
 
   // --- Run / cancel button handlers ----------------------------------------
-  function onRunClick() {
-    // Step 3 placeholder. Steps 4-7 wire up the real pipeline phases.
-    log('info', 'Run requested — pipeline not implemented yet');
+  // Step 4 wires up the TM scrape phase. Steps 5-7 will append further
+  // phase calls inside the try-block (BGG corpus, matching, commit).
+  async function onRunClick() {
+    // Disable Run + show Cancel immediately so a slow first fetch can't be
+    // double-triggered.
+    bsnzUi.runBtn.disabled = true;
+    bsnzUi.runBtn.style.opacity = '0.5';
+    bsnzUi.runBtn.style.cursor  = 'not-allowed';
+    bsnzUi.cancelBtn.style.display = 'inline-block';
+
+    BSNZ.stats.tm_scraped = 0;
+    renderStats();
+    setPhase('Scraping TM');
+    setProgressIndeterminate(true);
+
+    BSNZ.abortController = new AbortController();
+    try {
+      await runScrapePhase(BSNZ.abortController.signal);
+      log('info', 'Scrape complete; later phases not yet implemented.');
+      setPhase('Done');
+    } catch (e) {
+      log('error', 'Pipeline failed: ' + e.message);
+      setPhase(e.message === 'aborted' ? 'Cancelled' : 'Error');
+    } finally {
+      BSNZ.abortController = null;
+      bsnzUi.cancelBtn.style.display = 'none';
+      setProgressIndeterminate(false);
+      setProgress(0);
+      refreshRunBtnEnabled();
+    }
   }
   function onCancelClick() {
     if (BSNZ.abortController) {
       try { BSNZ.abortController.abort(); } catch (_) {}
-      log('warn', 'Cancel requested.');
     }
-    setRunning(false);
-    setPhase('Idle');
+    log('warn', 'Cancelled by user');
+  }
+
+  // --- Progress bar: per-phase update entry-point --------------------------
+  // 02-tm-scraper.js (and Step 5+ phases) call window.bsnzUpdateProgress to
+  // drive the bar without poking DOM directly. The 'scrape' phase has no
+  // up-front total page count, so the bar runs as an indeterminate stripe
+  // until a later phase swaps in a real percentage.
+  window.bsnzUpdateProgress = function (phase, info) {
+    if (!bsnzUi.statusEl) return;
+    if (phase === 'scrape') {
+      setProgressIndeterminate(true);
+      const n = (info && info.pageNum) || '?';
+      const added = (info && info.addedCount) != null ? info.addedCount : '?';
+      setPhase(`Scraping TM page ${n} (+${added})`);
+      renderStats();
+    }
+  };
+
+  // Indeterminate animation needs a CSS keyframe — inline `style` can't
+  // hold @keyframes, so we inject a tiny <style> tag once on first toggle.
+  let _stripeStyleInjected = false;
+  function ensureStripeStyle() {
+    if (_stripeStyleInjected) return;
+    const s = document.createElement('style');
+    s.textContent =
+      '@keyframes bsnz-stripes { from { background-position: 0 0; }' +
+      ' to { background-position: 24px 0; } }' +
+      '.bsnz-indeterminate { width: 100% !important;' +
+      ' background-image: linear-gradient(45deg,' +
+      ' rgba(255,255,255,0.35) 25%, transparent 25%,' +
+      ' transparent 50%, rgba(255,255,255,0.35) 50%,' +
+      ' rgba(255,255,255,0.35) 75%, transparent 75%, transparent) !important;' +
+      ' background-size: 24px 24px !important;' +
+      ' animation: bsnz-stripes 0.8s linear infinite; }';
+    document.head.appendChild(s);
+    _stripeStyleInjected = true;
+  }
+  function setProgressIndeterminate(active) {
+    if (!bsnzUi.progressEl) return;
+    if (active) {
+      ensureStripeStyle();
+      bsnzUi.progressEl.classList.add('bsnz-indeterminate');
+    } else {
+      bsnzUi.progressEl.classList.remove('bsnz-indeterminate');
+    }
   }
 
   // --- Log subscription -----------------------------------------------------
