@@ -22,3 +22,4 @@ duplicate their content into root `CLAUDE.md`.
 | [`11-future-plans.md`](11-future-plans.md) | Roadmap. |
 | [`12-debug-system.md`](12-debug-system.md) | `window.BSNZ` debug surface. |
 | [`13-pipeline-pre-merged-data.md`](13-pipeline-pre-merged-data.md) | Pipeline pre-merged data file (`data/bsnz.json`) schema. |
+| [`14-pipeline-build-history.md`](14-pipeline-build-history.md) | Pipeline build history (chronological session log). |

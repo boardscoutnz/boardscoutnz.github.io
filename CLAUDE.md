@@ -24,7 +24,7 @@ here.
 | [`docs/`](docs/) | source | 12 numbered topic files + project overview index |
 | [`components/`](components/) | source | 7 HTML fragments + `build.sh` + `README.md` |
 | [`css/`](css/) | source | 12 numbered stylesheets, auto-included by build |
-| [`js/`](js/) | source | 15 numbered modules + `app.js` (master), auto-included by build |
+| [`js/`](js/) | source | 16 numbered modules + `app.js` (master), auto-included by build |
 | [`tprmky/tm-bgbf-src/`](tprmky/tm-bgbf-src/) | source | 18 IIFE fragments (00-header, 01-16, 99-footer) |
 | [`tprmky/bgg-ranks-exporter.user.js`](tprmky/bgg-ranks-exporter.user.js) | source | Standalone userscript, edit directly (no build) |
 | [`tprmky/README.md`](tprmky/README.md), [`tprmky/build.sh`](tprmky/build.sh) | source | Userscript build docs + script |
@@ -41,6 +41,7 @@ files do I open for X?"
 | Subsystem | Source | Docs |
 |---|---|---|
 | Debug system / `window.BSNZ` console API | [`js/01-debug.js`](js/01-debug.js), [`js/03-state.js`](js/03-state.js) | [`docs/12-debug-system.md`](docs/12-debug-system.md) |
+| Pipeline build history (chronological session log) | — | [`docs/14-pipeline-build-history.md`](docs/14-pipeline-build-history.md) |
 | Config / constants / matching knobs | [`js/02-config.js`](js/02-config.js) | [`docs/02-current-state.md`](docs/02-current-state.md), [`docs/07-matching.md`](docs/07-matching.md) |
 | Mutable state (`listings`, `bgg`, `mySorters`, `filters`) | [`js/03-state.js`](js/03-state.js) | [`docs/12-debug-system.md`](docs/12-debug-system.md) |
 | Boot sequence | [`js/04-bootstrap.js`](js/04-bootstrap.js), [`js/app.js`](js/app.js) | [`docs/01-stack.md`](docs/01-stack.md) |
@@ -55,6 +56,7 @@ files do I open for X?"
 | Toolbar / BGG mode / CSV export / stats bar | [`js/13-toolbar.js`](js/13-toolbar.js) | [`docs/05-layout.md`](docs/05-layout.md) |
 | Help modal + first-time multi-sort hint | [`js/14-help.js`](js/14-help.js) | [`docs/05-layout.md`](docs/05-layout.md) |
 | Tiny utilities (`showToast`, `escapeHtml`, `debounce`) | [`js/15-utils.js`](js/15-utils.js) | — |
+| BGG rating slider (sidebar dual-handle control) | [`js/16-rating-slider.js`](js/16-rating-slider.js) | [`docs/06-filters.md`](docs/06-filters.md) |
 | TM listings collector userscript | [`tprmky/tm-bgbf-src/`](tprmky/tm-bgbf-src/) (`*.js` per module — see [`tprmky/README.md`](tprmky/README.md)) | [`docs/09-tampermonkey-tm.md`](docs/09-tampermonkey-tm.md) |
 | BGG ranks exporter userscript | [`tprmky/bgg-ranks-exporter.user.js`](tprmky/bgg-ranks-exporter.user.js) | [`docs/10-tampermonkey-bgg.md`](docs/10-tampermonkey-bgg.md) |
 | Roadmap / future plans | — | [`docs/11-future-plans.md`](docs/11-future-plans.md) |
