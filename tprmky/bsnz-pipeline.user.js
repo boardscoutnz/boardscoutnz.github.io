@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.1
+// @version      0.3.2
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.1';
+  const VERSION = '0.3.2';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -61,6 +61,7 @@
   const BGG_MAX_RETRIES      = 5;
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
   const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
+  const TM_MAX_RETRIES_PER_PAGE = 3;  // retries per TM page on transient errors (429/502/503/504); after exhaustion, skip the page with a warning rather than abort the run.
 
   // --- Trade Me category coverage ------------------------------------------
   // Hardcoded list of TM subcategory paths the scraper walks per run. Ported
@@ -682,7 +683,30 @@
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
         log('info', `Fetching ${subcat.slug} page ${pageNum}: ${pageUrl}`);
-        const html = await fetchTMPageHtml(pageUrl, signal);
+        let html;
+        try {
+          html = await fetchTMPageHtml(pageUrl, signal);
+        } catch (err) {
+          if (err instanceof TMPageRetryExhausted) {
+            log('warn', `${subcat.slug}: page ${pageNum} retries exhausted (transient TM error) — skipping page and continuing.`);
+            // Advance to the next page by URL manipulation; we don't have a
+            // parsed nextUrl since the fetch never produced HTML. Mirrors
+            // computeNextUrl's ?page=N+1 scheme.
+            try {
+              const u = new URL(pageUrl);
+              u.searchParams.set('page', String(pageNum + 1));
+              pageUrl = u.toString();
+            } catch (_) {
+              pageUrl = null;
+            }
+            pageNum++;
+            if (pageUrl) {
+              await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
+            }
+            continue;
+          }
+          throw err;
+        }
         const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
         let added = 0;
         for (const listing of listings) {
@@ -718,9 +742,64 @@
     log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`);
   }
 
+  // Thrown by fetchTMPageHtml when a page returned a transient HTTP code
+  // (429/502/503/504) on every attempt up to TM_MAX_RETRIES_PER_PAGE. The
+  // outer scrape loop catches this specifically to skip the page rather
+  // than abort the run; any other thrown error remains fatal as before.
+  class TMPageRetryExhausted extends Error {
+    constructor(url, lastStatus, attempts) {
+      super(`TM page ${url} retries exhausted after ${attempts} attempt(s); last status ${lastStatus}`);
+      this.name = 'TMPageRetryExhausted';
+      this.url = url;
+      this.lastStatus = lastStatus;
+      this.attempts = attempts;
+    }
+  }
+
+  // Status codes treated as transient throttles/upstream blips. TM's
+  // anti-scraping layer surfaces 503 mid-run; 502/504 cover Cloudflare
+  // upstream wobble; 429 is explicit rate-limit. Everything else 4xx is
+  // permanent (bad URL, auth, etc.) and stays fatal.
+  const TM_TRANSIENT_STATUSES = new Set([429, 502, 503, 504]);
+  // Backoff schedule in ms for retries 1, 2, 3 (capped). Honours the
+  // abort signal at every wait via tmSleep.
+  const TM_RETRY_BACKOFF_MS = [5000, 15000, 45000];
+
+  // Retrying wrapper around fetchTMPageHtmlOnce. On transient HTTP codes
+  // (see TM_TRANSIENT_STATUSES), retries up to TM_MAX_RETRIES_PER_PAGE
+  // with exponential-ish backoff. Throws TMPageRetryExhausted when those
+  // retries are spent so the caller can decide whether to skip the page.
+  async function fetchTMPageHtml(url, signal) {
+    let lastStatus = null;
+    for (let attempt = 0; attempt <= TM_MAX_RETRIES_PER_PAGE; attempt++) {
+      if (signal && signal.aborted) throw new Error('aborted');
+      try {
+        return await fetchTMPageHtmlOnce(url, signal);
+      } catch (err) {
+        const status = err && err.status;
+        if (status && TM_TRANSIENT_STATUSES.has(status) && attempt < TM_MAX_RETRIES_PER_PAGE) {
+          lastStatus = status;
+          const waitMs = TM_RETRY_BACKOFF_MS[Math.min(attempt, TM_RETRY_BACKOFF_MS.length - 1)];
+          log('warn', `TM HTTP ${status} on ${url} — retry ${attempt + 1}/${TM_MAX_RETRIES_PER_PAGE} in ${Math.round(waitMs / 1000)}s.`);
+          await tmSleep(waitMs, signal);
+          continue;
+        }
+        if (status && TM_TRANSIENT_STATUSES.has(status)) {
+          throw new TMPageRetryExhausted(url, status, attempt + 1);
+        }
+        throw err;
+      }
+    }
+    // Unreachable in practice (loop returns or throws), but keeps the
+    // type-shape sane if the loop bound ever changes.
+    throw new TMPageRetryExhausted(url, lastStatus, TM_MAX_RETRIES_PER_PAGE + 1);
+  }
+
   // GM_xmlhttpRequest doesn't accept an AbortSignal natively; it returns a
   // handle with .abort(). Bridge the signal manually so cancel propagates.
-  function fetchTMPageHtml(url, signal) {
+  // Errors from non-200 responses carry .status so the retry wrapper can
+  // distinguish transient throttles from permanent 4xx.
+  function fetchTMPageHtmlOnce(url, signal) {
     return new Promise((resolve, reject) => {
       let aborted = false;
       const handle = GM_xmlhttpRequest({
@@ -731,7 +810,11 @@
         onload: (r) => {
           if (aborted) return;
           if (r.status === 200) resolve(r.responseText);
-          else reject(new Error('TM HTTP ' + r.status));
+          else {
+            const e = new Error('TM HTTP ' + r.status);
+            e.status = r.status;
+            reject(e);
+          }
         },
         onerror: (e) => {
           if (aborted) return;
