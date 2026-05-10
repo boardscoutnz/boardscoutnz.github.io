@@ -24,6 +24,10 @@
     // that appears in both card-games and games-puzzles-other (TM lets sellers
     // cross-list) is tagged with the slug it was first seen in.
     const seen = new Set();
+    // Per-subcat announced "Showing N results" totals, parsed from the SSR
+    // heading on page 1. Recorded for the post-loop diagnostic summary; null
+    // if the parse failed for that subcat.
+    const announcedTotals = [];
 
     for (let i = 0; i < TM_SUBCATS.length; i++) {
       const subcat = TM_SUBCATS[i];
@@ -31,10 +35,7 @@
       let pageNum = 1;
       const subcatBaseUrl = pageUrl;
       const displayPath = subcatBaseUrl.replace(TM_DISPLAY_PREFIX_STRIP, '') || subcatBaseUrl;
-      log('info', `Fetching ${subcat.slug}:`, {
-        consoleMsg: `Fetching ${subcat.slug} subcategory at ${subcatBaseUrl}`,
-        link: { text: displayPath, href: subcatBaseUrl }
-      });
+      const subcatStartTotal = BSNZ.tm_listings.length;
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
         let html;
@@ -43,16 +44,7 @@
         } catch (err) {
           if (err instanceof TMPageRetryExhausted) {
             log('warn', `${subcat.slug}: page ${pageNum} retries exhausted (transient TM error) — skipping page and continuing.`);
-            // Advance to the next page by URL manipulation; we don't have a
-            // parsed nextUrl since the fetch never produced HTML. Mirrors
-            // computeNextUrl's ?page=N+1 scheme.
-            try {
-              const u = new URL(pageUrl);
-              u.searchParams.set('page', String(pageNum + 1));
-              pageUrl = u.toString();
-            } catch (_) {
-              pageUrl = null;
-            }
+            pageUrl = bumpPageUrl(pageUrl, pageNum);
             pageNum++;
             if (pageUrl) {
               await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
@@ -61,7 +53,7 @@
           }
           throw err;
         }
-        const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
+        const { listings, totalResults, hasNextPage } = parseTMListingsPage(html);
         let added = 0;
         for (const listing of listings) {
           if (seen.has(listing.tm_id)) continue;
@@ -72,19 +64,40 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
-        const pageLevel = listings.length === 0 ? 'warn' : 'info';
+
+        // First-page-only: emit the per-subcat header log (now enriched with
+        // announced total + expected page count) and record the announced
+        // total for the post-loop summary.
+        if (pageNum === 1) {
+          announcedTotals.push(totalResults);
+          const expectedPages = totalResults != null ? Math.ceil(totalResults / 56) : null;
+          const headerSuffix = totalResults != null
+            ? ` (${totalResults.toLocaleString()} results, ~${expectedPages} pages expected)`
+            : '';
+          log('info', `Fetching ${subcat.slug}${headerSuffix}:`, {
+            consoleMsg: `Fetching ${subcat.slug} subcategory at ${subcatBaseUrl} (totalResults=${totalResults})`,
+            link: { text: displayPath, href: subcatBaseUrl }
+          });
+        }
+
+        const pageLevel = (listings.length === 0 || (pageNum === 1 && totalResults === 0))
+          ? 'warn'
+          : 'info';
         log(pageLevel, `#${pageNum} = ${listings.length} items [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
           consoleMsg: `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`
         });
-        if (added === 0) {
-          log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
+
+        if (!hasNextPage) {
+          log('info', `${subcat.slug}: reached end of inventory after ${pageNum} page(s)`, {
+            consoleMsg: `${subcat.slug}: hasNextPage=false on page ${pageNum}; total scraped from this subcat=${BSNZ.tm_listings.length - subcatStartTotal}`
+          });
           break;
         }
         if (pageNum >= TM_MAX_PAGES_PER_SUBCAT) {
-          log('warn', `${subcat.slug}: hit hard cap of ${TM_MAX_PAGES_PER_SUBCAT} pages — stopping. Investigate whether this subcat genuinely has more listings.`);
+          log('warn', `${subcat.slug}: hit page cap of ${TM_MAX_PAGES_PER_SUBCAT} without next-page-link disappearing — TM markup may have changed`);
           break;
         }
-        pageUrl = nextUrl;
+        pageUrl = bumpPageUrl(pageUrl, pageNum);
         pageNum++;
         if (pageUrl) {
           await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
@@ -101,7 +114,9 @@
       listings_scraped: BSNZ.tm_listings.length,
       subcat_count: TM_SUBCATS.length
     });
-    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`);
+    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`, {
+      consoleMsg: `TM scrape complete: scraped=${BSNZ.tm_listings.length} announced_totals=[${announcedTotals.join(',')}] sum_announced=${announcedTotals.reduce((a, b) => a + (b || 0), 0)}`
+    });
   }
 
   // Thrown by fetchTMPageHtml when a page returned a transient HTTP code
@@ -199,24 +214,14 @@
     });
   }
 
-  function parseTMListingsPage(html, sourceUrl) {
+  function parseTMListingsPage(html) {
     const doc = new DOMParser().parseFromString(html, 'text/html');
 
     let rawListings = [];
-    let totalCount = null;
     const nd = extractNextData(doc);
     if (nd) {
       const arr = findListingArrayInJson(nd);
-      if (arr && arr.length) {
-        rawListings = arr;
-        totalCount = pickFirstPath(nd, [
-          'props.pageProps.totalCount',
-          'props.pageProps.searchResults.totalCount',
-          'props.pageProps.results.totalCount',
-          'props.pageProps.listings.totalCount',
-          'props.pageProps.searchResults.foundItems'
-        ]);
-      }
+      if (arr && arr.length) rawListings = arr;
     }
 
     let listings;
@@ -226,8 +231,19 @@
       listings = scrapeTmDomCards(doc);
     }
 
-    const nextUrl = computeNextUrl(sourceUrl, listings.length, totalCount);
-    return { listings, nextUrl };
+    // Total results count — only meaningful at start of subcat, but present on every page
+    let totalResults = null;
+    const countEl = doc.querySelector('h3.tm-search-header-result-count__heading');
+    if (countEl) {
+      const m = (countEl.textContent || '').match(/Showing\s+([\d,]+)\s+results?/i);
+      if (m) totalResults = parseInt(m[1].replace(/,/g, ''), 10);
+    }
+
+    // Next-page link presence — the binary "should we fetch page N+1" signal
+    const nextLink = doc.querySelector('a[aria-label^="Next page"]');
+    const hasNextPage = !!nextLink;
+
+    return { listings, totalResults, hasNextPage };
   }
 
   function extractNextData(doc) {
@@ -386,16 +402,17 @@
     return out;
   }
 
-  // TM paginates via ?page=N. Increment until a page returns zero listings,
-  // or until cumulative count reaches totalCount, whichever comes first.
-  function computeNextUrl(currentUrl, listingsThisPage, totalCount) {
-    if (!listingsThisPage) return null;
-    let u;
-    try { u = new URL(currentUrl); } catch (_) { return null; }
-    const curPage = parseInt(u.searchParams.get('page') || '1', 10) || 1;
-    if (totalCount && BSNZ.stats.tm_scraped >= totalCount) return null;
-    u.searchParams.set('page', String(curPage + 1));
-    return u.toString();
+  // TM paginates via ?page=N. Bumps the current URL's page param by one.
+  // Termination is decided by hasNextPage (parseTMListingsPage); this helper
+  // only runs when the SSR HTML actually advertised another page.
+  function bumpPageUrl(currentUrl, currentPageNum) {
+    try {
+      const u = new URL(currentUrl);
+      u.searchParams.set('page', String(currentPageNum + 1));
+      return u.toString();
+    } catch (_) {
+      return null;
+    }
   }
 
   function tmSleep(ms, signal) {
