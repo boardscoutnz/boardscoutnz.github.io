@@ -159,8 +159,22 @@ mirrors `tprmky/tm-bgbf-src/`:
 - `00-config.js` opens the IIFE and emits the `// ==UserScript== … // ==/UserScript==`
   header. It must remain the first file.
 - `99-footer.js` closes the IIFE with `})();`. It must remain the last file.
-- All functional modules sit between (`01-ui.js`, future `02-…` through
-  `06-…`).
+- All functional modules sit between (`01-ui.js`, `02-tm-scraper.js`,
+  future `03-…` through `06-…`).
+
+The TM scraper module (`02-tm-scraper.js`, added in Step 4 of the pipeline
+plan) exposes one entry point — `runScrapePhase(signal)` — which paginates
+`BSNZ.config.tm_category_url` via `?page=N`, fetches each page through
+`GM_xmlhttpRequest`, and parses the embedded `__NEXT_DATA__` JSON (with a
+DOM-card selector fallback ported from `tprmky/tm-bgbf-src/08-extraction.js`).
+It writes each listing-card record into `BSNZ.tm_listings` using the
+TM-sourced field names defined above (`tm_id`, `tm_url`, `tm_title`,
+`tm_price_nzd`, `tm_buy_now_nzd`, `tm_condition`, `tm_location`) and
+increments `BSNZ.stats.tm_scraped`. Page-to-page pacing is
+`BSNZ.config.pacing_multiplier × TM_REQUEST_DELAY_MS`. The phase honours an
+`AbortSignal` — `01-ui.js` creates a fresh `AbortController` on each Run
+click, stores it as `BSNZ.abortController`, and the Cancel button calls
+`abort()`.
 
 The IIFE closer lives in `99-footer.js` so every intermediate build artefact is
 syntactically valid JavaScript. Do not add `})();` to any other file, and do

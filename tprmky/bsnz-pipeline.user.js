@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.1.0
+// @version      0.2.0
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -32,7 +32,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const SCHEMA_VERSION = '1.0.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -306,17 +306,87 @@
   window.bsnzUi = Object.assign(bsnzUi, { setPhase, setProgress, setRunning, renderStats });
 
   // --- Run / cancel button handlers ----------------------------------------
-  function onRunClick() {
-    // Step 3 placeholder. Steps 4-7 wire up the real pipeline phases.
-    log('info', 'Run requested — pipeline not implemented yet');
+  // Step 4 wires up the TM scrape phase. Steps 5-7 will append further
+  // phase calls inside the try-block (BGG corpus, matching, commit).
+  async function onRunClick() {
+    // Disable Run + show Cancel immediately so a slow first fetch can't be
+    // double-triggered.
+    bsnzUi.runBtn.disabled = true;
+    bsnzUi.runBtn.style.opacity = '0.5';
+    bsnzUi.runBtn.style.cursor  = 'not-allowed';
+    bsnzUi.cancelBtn.style.display = 'inline-block';
+
+    BSNZ.stats.tm_scraped = 0;
+    renderStats();
+    setPhase('Scraping TM');
+    setProgressIndeterminate(true);
+
+    BSNZ.abortController = new AbortController();
+    try {
+      await runScrapePhase(BSNZ.abortController.signal);
+      log('info', 'Scrape complete; later phases not yet implemented.');
+      setPhase('Done');
+    } catch (e) {
+      log('error', 'Pipeline failed: ' + e.message);
+      setPhase(e.message === 'aborted' ? 'Cancelled' : 'Error');
+    } finally {
+      BSNZ.abortController = null;
+      bsnzUi.cancelBtn.style.display = 'none';
+      setProgressIndeterminate(false);
+      setProgress(0);
+      refreshRunBtnEnabled();
+    }
   }
   function onCancelClick() {
     if (BSNZ.abortController) {
       try { BSNZ.abortController.abort(); } catch (_) {}
-      log('warn', 'Cancel requested.');
     }
-    setRunning(false);
-    setPhase('Idle');
+    log('warn', 'Cancelled by user');
+  }
+
+  // --- Progress bar: per-phase update entry-point --------------------------
+  // 02-tm-scraper.js (and Step 5+ phases) call window.bsnzUpdateProgress to
+  // drive the bar without poking DOM directly. The 'scrape' phase has no
+  // up-front total page count, so the bar runs as an indeterminate stripe
+  // until a later phase swaps in a real percentage.
+  window.bsnzUpdateProgress = function (phase, info) {
+    if (!bsnzUi.statusEl) return;
+    if (phase === 'scrape') {
+      setProgressIndeterminate(true);
+      const n = (info && info.pageNum) || '?';
+      const added = (info && info.addedCount) != null ? info.addedCount : '?';
+      setPhase(`Scraping TM page ${n} (+${added})`);
+      renderStats();
+    }
+  };
+
+  // Indeterminate animation needs a CSS keyframe — inline `style` can't
+  // hold @keyframes, so we inject a tiny <style> tag once on first toggle.
+  let _stripeStyleInjected = false;
+  function ensureStripeStyle() {
+    if (_stripeStyleInjected) return;
+    const s = document.createElement('style');
+    s.textContent =
+      '@keyframes bsnz-stripes { from { background-position: 0 0; }' +
+      ' to { background-position: 24px 0; } }' +
+      '.bsnz-indeterminate { width: 100% !important;' +
+      ' background-image: linear-gradient(45deg,' +
+      ' rgba(255,255,255,0.35) 25%, transparent 25%,' +
+      ' transparent 50%, rgba(255,255,255,0.35) 50%,' +
+      ' rgba(255,255,255,0.35) 75%, transparent 75%, transparent) !important;' +
+      ' background-size: 24px 24px !important;' +
+      ' animation: bsnz-stripes 0.8s linear infinite; }';
+    document.head.appendChild(s);
+    _stripeStyleInjected = true;
+  }
+  function setProgressIndeterminate(active) {
+    if (!bsnzUi.progressEl) return;
+    if (active) {
+      ensureStripeStyle();
+      bsnzUi.progressEl.classList.add('bsnz-indeterminate');
+    } else {
+      bsnzUi.progressEl.classList.remove('bsnz-indeterminate');
+    }
   }
 
   // --- Log subscription -----------------------------------------------------
@@ -535,6 +605,308 @@
   } else {
     initPanel();
   }
+// tprmky/bsnz-pipeline-src/02-tm-scraper.js
+// ===== TM scraper module =====
+// Inputs:  BSNZ.config.tm_category_url
+// Outputs: BSNZ.tm_listings = [ {tm_id, tm_url, tm_title, ...}, ... ]
+// Side effects: updates BSNZ.stats.tm_scraped, calls log() and updateProgress().
+//
+// Runs inside the shared IIFE opened in 00-config.js — so TM_REQUEST_DELAY_MS,
+// BSNZ, log, etc. resolve from closure scope.
+//
+// Extraction strategy. The legacy TM scraper (tprmky/tm-bgbf-src/) showed
+// that TM's search-result pages are Next.js-rendered: the listing array is
+// embedded as JSON inside <script id="__NEXT_DATA__">, with a DOM card
+// fallback when that script is absent. We re-use that two-tier approach
+// here, but emit the bsnz.json record shape (tm_id / tm_url / tm_title /
+// tm_price_nzd / tm_buy_now_nzd / tm_condition / tm_location) — see
+// docs/13-pipeline-pre-merged-data.md.
+
+  const TM_ORIGIN = 'https://www.trademe.co.nz';
+
+  async function runScrapePhase(signal) {
+    log('info', 'TM scrape phase starting');
+    BSNZ.tm_listings = [];
+    BSNZ.stats.tm_scraped = 0;
+    const startUrl = BSNZ.config.tm_category_url;
+    if (!startUrl) throw new Error('tm_category_url not configured');
+
+    let pageUrl = startUrl;
+    let pageNum = 1;
+    while (pageUrl) {
+      if (signal.aborted) throw new Error('aborted');
+      log('info', `Fetching TM page ${pageNum}: ${pageUrl}`);
+      const html = await fetchTMPageHtml(pageUrl, signal);
+      const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
+      BSNZ.tm_listings.push(...listings);
+      BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
+      tmUpdateProgress('scrape', pageNum, listings.length);
+      pageUrl = nextUrl;
+      pageNum++;
+      if (pageUrl) {
+        await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
+      }
+    }
+    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings`);
+  }
+
+  // GM_xmlhttpRequest doesn't accept an AbortSignal natively; it returns a
+  // handle with .abort(). Bridge the signal manually so cancel propagates.
+  function fetchTMPageHtml(url, signal) {
+    return new Promise((resolve, reject) => {
+      let aborted = false;
+      const handle = GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        headers: { 'Accept': 'text/html' },
+        timeout: 30000,
+        onload: (r) => {
+          if (aborted) return;
+          if (r.status === 200) resolve(r.responseText);
+          else reject(new Error('TM HTTP ' + r.status));
+        },
+        onerror: (e) => {
+          if (aborted) return;
+          reject(new Error('TM network error: ' + ((e && e.error) || 'unknown')));
+        },
+        ontimeout: () => {
+          if (aborted) return;
+          reject(new Error('TM request timeout'));
+        }
+      });
+      if (signal) {
+        const onAbort = () => {
+          aborted = true;
+          try { if (handle && typeof handle.abort === 'function') handle.abort(); } catch (_) {}
+          reject(new Error('aborted'));
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
+  }
+
+  function parseTMListingsPage(html, sourceUrl) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    let rawListings = [];
+    let totalCount = null;
+    const nd = extractNextData(doc);
+    if (nd) {
+      const arr = findListingArrayInJson(nd);
+      if (arr && arr.length) {
+        rawListings = arr;
+        totalCount = pickFirstPath(nd, [
+          'props.pageProps.totalCount',
+          'props.pageProps.searchResults.totalCount',
+          'props.pageProps.results.totalCount',
+          'props.pageProps.listings.totalCount',
+          'props.pageProps.searchResults.foundItems'
+        ]);
+      }
+    }
+
+    let listings;
+    if (rawListings.length) {
+      listings = rawListings.map(normaliseTmListing).filter(Boolean);
+    } else {
+      listings = scrapeTmDomCards(doc);
+    }
+
+    const nextUrl = computeNextUrl(sourceUrl, listings.length, totalCount);
+    return { listings, nextUrl };
+  }
+
+  function extractNextData(doc) {
+    const el = doc.getElementById('__NEXT_DATA__');
+    if (!el || !el.textContent) return null;
+    try { return JSON.parse(el.textContent); } catch (_) { return null; }
+  }
+
+  // BFS for the longest array of objects whose elements look like listings
+  // (have a listingId / ListingId field). Mirrors the legacy
+  // findListingArraysInJson() heuristic but returns the single best array.
+  function findListingArrayInJson(root) {
+    const found = [];
+    const stack = [root];
+    const visited = new WeakSet();
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || typeof node !== 'object' || visited.has(node)) continue;
+      visited.add(node);
+      if (Array.isArray(node)) {
+        if (node.length && typeof node[0] === 'object' && node[0] &&
+            (node[0].listingId != null || node[0].ListingId != null)) {
+          found.push(node);
+        }
+        for (const v of node) if (v && typeof v === 'object') stack.push(v);
+      } else {
+        for (const k of Object.keys(node)) {
+          const v = node[k];
+          if (v && typeof v === 'object') stack.push(v);
+        }
+      }
+    }
+    found.sort((a, b) => b.length - a.length);
+    return found[0] || null;
+  }
+
+  function getPath(obj, path) {
+    if (obj == null) return undefined;
+    return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
+  }
+
+  function pickFirst(obj, keys) {
+    for (const k of keys) {
+      const v = obj[k];
+      if (v != null && v !== '') return v;
+    }
+    return undefined;
+  }
+
+  function pickFirstPath(obj, paths) {
+    for (const p of paths) {
+      const v = getPath(obj, p);
+      if (v != null && v !== '') return v;
+    }
+    return null;
+  }
+
+  function toNum(v) {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function parsePriceText(text) {
+    if (!text) return null;
+    const m = String(text).match(/\$\s*([\d,]+(?:\.\d+)?)/);
+    if (!m) return null;
+    const n = Number(m[1].replace(/,/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function cleanLocation(s) {
+    if (s == null) return null;
+    let cleaned = String(s)
+      .split(/\s*(?:Closes|Closing|Listed|Ends|Started|Closed)\b/i)[0]
+      .split(/[—–]/)[0]
+      .replace(/^[\s·•,|]+|[\s·•,|]+$/g, '')
+      .trim();
+    return cleaned || null;
+  }
+
+  // Map TM's raw __NEXT_DATA__ listing object to the bsnz.json TM-sourced
+  // field shape. Field-name candidates mirror tm-bgbf-src/09-normaliser.js.
+  function normaliseTmListing(raw) {
+    if (!raw) return null;
+    const idRaw = pickFirst(raw, ['listingId', 'ListingId', 'id']);
+    const idNum = toNum(idRaw);
+    if (!idNum) return null;
+    const tm_id = String(idNum);
+
+    const tm_title = String(pickFirst(raw, ['title', 'Title', 'name']) || '').trim();
+    if (!tm_title) return null;
+
+    const startPrice = toNum(pickFirst(raw, [
+      'startPrice', 'StartPrice', 'currentBid', 'CurrentBid',
+      'currentPrice', 'CurrentPrice', 'minimumNextBid', 'MinimumNextBid'
+    ]));
+    const buyNow = toNum(pickFirst(raw, ['buyNowPrice', 'BuyNowPrice', 'buyNow', 'BuyNow']));
+    const priceDisplay = pickFirst(raw, ['priceDisplay', 'PriceDisplay', 'displayPrice', 'DisplayPrice']);
+    const tm_price_nzd = startPrice ?? buyNow ?? parsePriceText(priceDisplay);
+    const tm_buy_now_nzd = buyNow;
+
+    const conditionRaw = String(pickFirst(raw, ['condition', 'Condition']) || '').toLowerCase();
+    const tm_condition = conditionRaw === 'new' ? 'New'
+                       : conditionRaw === 'used' ? 'Used'
+                       : '';
+
+    const tm_location = cleanLocation(pickFirst(raw, [
+      'region', 'Region', 'regionName', 'RegionName', 'location', 'Location'
+    ])) || '';
+
+    const tm_url = `${TM_ORIGIN}/a/marketplace/listing/${tm_id}`;
+
+    return { tm_id, tm_url, tm_title, tm_price_nzd, tm_buy_now_nzd, tm_condition, tm_location };
+  }
+
+  // DOM-cards fallback (used when __NEXT_DATA__ is missing or empty).
+  // Selectors ported from tm-bgbf-src/08-extraction.js scrapeDomCards().
+  function scrapeTmDomCards(doc) {
+    const out = [];
+    const cards = doc.querySelectorAll(
+      'a[href*="/listing/"], [data-testid*="search-card"], [class*="search-card"]'
+    );
+    const seen = new Set();
+    cards.forEach((node) => {
+      const a = node.tagName === 'A' ? node : node.querySelector('a[href*="/listing/"]');
+      const dataId = node.getAttribute && node.getAttribute('data-listing-id');
+      let id = dataId;
+      if (!id && a) {
+        const href = a.getAttribute('href') || '';
+        const m = href.match(/\/listing\/(\d+)/);
+        if (m) id = m[1];
+      }
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+
+      const tm_title = (node.querySelector('h3, [class*="title"]')?.textContent ||
+                        a?.getAttribute('title') || '').trim();
+      if (!tm_title) return;
+      const priceText = (node.querySelector('[class*="price"]')?.textContent || '').trim();
+      const tm_price_nzd = parsePriceText(priceText);
+      const locRaw = (node.querySelector('[class*="location"], [class*="region"]')?.textContent || '').trim();
+      const tm_location = cleanLocation(locRaw) || '';
+      const tm_url = `${TM_ORIGIN}/a/marketplace/listing/${id}`;
+
+      out.push({
+        tm_id: String(id),
+        tm_url,
+        tm_title,
+        tm_price_nzd,
+        tm_buy_now_nzd: null,
+        tm_condition: '',
+        tm_location
+      });
+    });
+    return out;
+  }
+
+  // TM paginates via ?page=N. Increment until a page returns zero listings,
+  // or until cumulative count reaches totalCount, whichever comes first.
+  function computeNextUrl(currentUrl, listingsThisPage, totalCount) {
+    if (!listingsThisPage) return null;
+    let u;
+    try { u = new URL(currentUrl); } catch (_) { return null; }
+    const curPage = parseInt(u.searchParams.get('page') || '1', 10) || 1;
+    if (totalCount && BSNZ.stats.tm_scraped >= totalCount) return null;
+    u.searchParams.set('page', String(curPage + 1));
+    return u.toString();
+  }
+
+  function tmSleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          clearTimeout(t);
+          reject(new Error('aborted'));
+        }, { once: true });
+      }
+    });
+  }
+
+  function tmUpdateProgress(phase, pageNum, addedCount) {
+    if (typeof window.bsnzUpdateProgress === 'function') {
+      window.bsnzUpdateProgress(phase, {
+        pageNum,
+        addedCount,
+        total: BSNZ.stats.tm_scraped
+      });
+    }
+  }
+
 // 99-footer.js — closes the IIFE opened in 00-config.js.
 // This file MUST sort last in tprmky/bsnz-pipeline-src/.
 })();
