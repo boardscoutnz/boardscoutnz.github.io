@@ -28,7 +28,7 @@
   const bsnzUi = {
     panel: null, body: null, statusEl: null, progressEl: null,
     statsEl: null, logEl: null, runBtn: null, cancelBtn: null,
-    minimised: false
+    fabEl: null, minimised: false
   };
 
   // --- Panel construction ---------------------------------------------------
@@ -58,7 +58,7 @@
     const minBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
-    }, { text: '–', title: 'Minimise', on: { click: toggleMinimise } });
+    }, { text: '–', title: 'Minimise', on: { click: minimisePanel } });
     header.append(title, cogBtn, minBtn);
 
     // Body container — everything below the header is hidden when minimised.
@@ -153,9 +153,67 @@
     }
   }
 
-  function toggleMinimise() {
-    bsnzUi.minimised = !bsnzUi.minimised;
-    bsnzUi.body.style.display = bsnzUi.minimised ? 'none' : 'flex';
+  // Panel minimised state: when minimised, the panel is hidden entirely (via
+  // the `bsnz-panel-minimized` class) and the FAB is the visible affordance.
+  // Not persisted — every page load starts minimised (see initPanel).
+  function minimisePanel() {
+    bsnzUi.minimised = true;
+    if (bsnzUi.panel) bsnzUi.panel.classList.add('bsnz-panel-minimized');
+    if (bsnzUi.fabEl) bsnzUi.fabEl.style.display = 'flex';
+  }
+  function restorePanel() {
+    bsnzUi.minimised = false;
+    if (bsnzUi.panel) bsnzUi.panel.classList.remove('bsnz-panel-minimized');
+    if (bsnzUi.fabEl) bsnzUi.fabEl.style.display = 'none';
+  }
+
+  // FAB CSS — sizes/position/z-index copied from tm-bgbf's #fab so the two
+  // buttons sit on the same baseline. The BSNZ FAB sits to the LEFT of
+  // tm-bgbf's (right offset = 16 + 52 + 12 = 80px). Distinct teal accent
+  // (#0d9488) keeps it visually separate from tm-bgbf's red. The pulse
+  // animation activates while a pipeline run is in progress.
+  let _fabStyleInjected = false;
+  function ensureFabStyle() {
+    if (_fabStyleInjected) return;
+    const s = document.createElement('style');
+    s.textContent =
+      '#bsnz-fab { position: fixed; right: 80px; bottom: 16px;' +
+      ' width: 52px; height: 52px; border-radius: 26px;' +
+      ' background: #0d9488; color: #fff; border: 2px solid #fff;' +
+      ' cursor: pointer; font-size: 22px;' +
+      ' box-shadow: 0 2px 12px rgba(0,0,0,.4);' +
+      ' z-index: 2147483647; padding: 0;' +
+      ' display: flex; align-items: center; justify-content: center;' +
+      ' transition: background 0.15s ease, transform 0.15s ease,' +
+      ' box-shadow 0.15s ease; }' +
+      '#bsnz-fab:hover { background: #0f766e; transform: scale(1.05);' +
+      ' box-shadow: 0 4px 18px rgba(0,0,0,.5); }' +
+      '#bsnz-fab.bsnz-fab-running {' +
+      ' animation: bsnz-fab-pulse 1.4s ease-in-out infinite; }' +
+      '@keyframes bsnz-fab-pulse {' +
+      ' 0%,100% { box-shadow: 0 2px 12px rgba(0,0,0,.4),' +
+      ' 0 0 0 0 rgba(13,148,136,.55); }' +
+      ' 50% { box-shadow: 0 2px 12px rgba(0,0,0,.4),' +
+      ' 0 0 0 10px rgba(13,148,136,0); } }' +
+      '.bsnz-panel-minimized { display: none !important; }';
+    document.head.appendChild(s);
+    _fabStyleInjected = true;
+  }
+
+  function buildFab() {
+    ensureFabStyle();
+    const fab = el('button', null, {
+      id: 'bsnz-fab',
+      title: 'BSNZ Pipeline',
+      text: '🧭',
+      on: { click: restorePanel }
+    });
+    return fab;
+  }
+
+  function setFabRunning(active) {
+    if (!bsnzUi.fabEl) return;
+    bsnzUi.fabEl.classList.toggle('bsnz-fab-running', !!active);
   }
 
   function refreshRunBtnEnabled() {
@@ -175,6 +233,7 @@
     bsnzUi.cancelBtn.style.display = active ? 'inline-block' : 'none';
     bsnzUi.runBtn.disabled = active || !BSNZ.config.pat;
     bsnzUi.runBtn.style.opacity = bsnzUi.runBtn.disabled ? '0.5' : '1';
+    setFabRunning(active);
   }
   // Expose for later modules.
   window.bsnzUi = Object.assign(bsnzUi, { setPhase, setProgress, setRunning, renderStats });
@@ -189,6 +248,7 @@
     bsnzUi.runBtn.style.opacity = '0.5';
     bsnzUi.runBtn.style.cursor  = 'not-allowed';
     bsnzUi.cancelBtn.style.display = 'inline-block';
+    setFabRunning(true);
 
     BSNZ.stats.tm_scraped = 0;
     renderStats();
@@ -210,6 +270,7 @@
     } finally {
       BSNZ.abortController = null;
       bsnzUi.cancelBtn.style.display = 'none';
+      setFabRunning(false);
       setProgressIndeterminate(false);
       setProgress(0);
       refreshRunBtnEnabled();
@@ -408,6 +469,14 @@
     });
     const crawlLabel = el('div', { fontWeight: '600' });
     crawlLabel.append(document.createTextNode('Crawl speed'), crawlChip);
+    // Plain-English tooltips per preset (shown via the native `title`
+    // attribute on the segment label — that's the element the user actually
+    // hovers).
+    const CRAWL_SPEED_TOOLTIPS = {
+      fastest:  'Quickest scrape. Higher chance of being temporarily blocked by Trade Me.',
+      balanced: 'Recommended. A safe middle ground for everyday runs.',
+      safest:   'Slowest scrape, lowest risk. Use after errors or for extra caution.'
+    };
     const crawlSeg = el('fieldset', null, { className: 'bsnz-seg' });
     for (const key of Object.keys(CRAWL_SPEED_PRESETS)) {
       const id = `bsnz-crawl-${key}`;
@@ -422,6 +491,7 @@
       });
       const lbl = el('label', null, {
         htmlFor: id,
+        title: CRAWL_SPEED_TOOLTIPS[key],
         text: key.charAt(0).toUpperCase() + key.slice(1)
       });
       crawlSeg.append(radio, lbl);
@@ -505,6 +575,14 @@
     const panel = buildPanel();
     document.body.appendChild(panel);
 
+    // FAB lives as a sibling of the panel. Built and attached unconditionally;
+    // the panel starts minimised so the FAB is the visible affordance on every
+    // page load (state intentionally not persisted across loads).
+    const fab = buildFab();
+    document.body.appendChild(fab);
+    bsnzUi.fabEl = fab;
+    minimisePanel();
+
     // Replay any log entries that accumulated before the panel existed.
     const tail = BSNZ.log.slice(-10);
     for (const entry of tail) appendLogEntry(entry);
@@ -517,7 +595,7 @@
   if (typeof GM_registerMenuCommand === 'function') {
     GM_registerMenuCommand('Open BSNZ panel', () => {
       if (!bsnzUi.panel) initPanel();
-      if (bsnzUi.minimised) toggleMinimise();
+      if (bsnzUi.minimised) restorePanel();
       bsnzUi.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     GM_registerMenuCommand('Open BSNZ settings', () => {
