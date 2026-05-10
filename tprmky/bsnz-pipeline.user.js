@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.3
+// @version      0.3.4
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.3';
+  const VERSION = '0.3.4';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -62,6 +62,33 @@
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
   const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
   const TM_MAX_RETRIES_PER_PAGE = 3;  // retries per TM page on transient errors (429/502/503/504); after exhaustion, skip the page with a warning rather than abort the run.
+
+  // Crawl-speed presets. Terminology + multiplier values mirror tm-bgbf's
+  // CRAWL_SPEED_PRESETS (tprmky/tm-bgbf-src/01-constants.js — delayMultiplier
+  // field). Internally the picked value is stored as `pacing_multiplier` and
+  // multiplied into TM_REQUEST_DELAY_MS / BGG_API_REQUEST_DELAY_MS by the TM
+  // and BGG fetchers; the segmented control in the settings dialog is purely
+  // a UI rename of the existing pacing knob.
+  const CRAWL_SPEED_PRESETS = {
+    fastest:  1.0,
+    balanced: 1.75,
+    safest:   3.5
+  };
+  const CRAWL_SPEED_DEFAULT = 'balanced';
+
+  // Map a stored numeric pacing_multiplier back to the closest preset label.
+  // Round to the nearest preset value rather than requiring exact match, so
+  // legacy stored values (e.g. 2.0 from the old slider) still resolve cleanly.
+  function crawlSpeedLabelForMultiplier(m) {
+    const entries = Object.entries(CRAWL_SPEED_PRESETS);
+    let best = entries[0];
+    let bestDist = Infinity;
+    for (const [label, val] of entries) {
+      const d = Math.abs(val - m);
+      if (d < bestDist) { bestDist = d; best = [label, val]; }
+    }
+    return best[0];
+  }
 
   // --- Trade Me category coverage ------------------------------------------
   // Hardcoded list of TM subcategory paths the scraper walks per run. Ported
@@ -433,6 +460,34 @@
     }
   }
 
+  // Segmented-control CSS for the Crawl-speed picker. Native radios are
+  // visually hidden and the adjacent <label> is styled as a button; the
+  // :checked + label selector cannot be expressed via inline styles, hence
+  // a one-shot <style> injection on first dialog open.
+  let _crawlSpeedStyleInjected = false;
+  function ensureCrawlSpeedStyle() {
+    if (_crawlSpeedStyleInjected) return;
+    const s = document.createElement('style');
+    s.textContent =
+      '.bsnz-seg { display: flex; gap: 0; border: 1px solid #aaa;' +
+      ' border-radius: 4px; overflow: hidden; padding: 0; margin: 0; }' +
+      '.bsnz-seg input { position: absolute; opacity: 0;' +
+      ' pointer-events: none; }' +
+      '.bsnz-seg label { flex: 1 1 0; text-align: center;' +
+      ' padding: 6px 8px; cursor: pointer; font-size: 12px;' +
+      ' background: #f7f7f7; color: #333;' +
+      ' border-left: 1px solid #ddd; user-select: none; }' +
+      '.bsnz-seg label:first-of-type { border-left: none; }' +
+      '.bsnz-seg input:checked + label {' +
+      ' background: #3b7ddd; color: #fff; font-weight: 600; }' +
+      '.bsnz-seg-chip { display: inline-block; padding: 1px 8px;' +
+      ' margin-left: 8px; border-radius: 10px; background: #eef3fb;' +
+      ' color: #1a3d7c; font-size: 11px; font-weight: 600;' +
+      ' vertical-align: middle; }';
+    document.head.appendChild(s);
+    _crawlSpeedStyleInjected = true;
+  }
+
   // --- Log subscription -----------------------------------------------------
   function appendLogEntry(entry) {
     if (!bsnzUi.logEl) return;
@@ -531,18 +586,38 @@
     autoRow.append(autoCb,
       el('span', null, { text: 'Auto-commit (skip final confirmation prompt)' }));
 
-    // Pacing slider
-    const paceLabel = el('div', { fontWeight: '600' }, { text: 'Pacing multiplier' });
-    const paceVal = el('span', { fontVariantNumeric: 'tabular-nums', marginLeft: '8px' },
-      { text: `${cfg.pacing_multiplier}x` });
-    const paceSlider = el('input', { width: '100%' }, {
-      type: 'range', min: '0.5', max: '3', step: '0.1',
-      value: String(cfg.pacing_multiplier),
-      on: { input: () => paceVal.textContent = `${paceSlider.value}x`,
-            change: () => saveConfigKey('pacing_multiplier', parseFloat(paceSlider.value)) }
+    // Crawl speed — segmented control. Mirrors tm-bgbf's "Crawl speed"
+    // terminology and the Fastest/Balanced/Safest preset names; the picked
+    // preset writes through to the underlying `pacing_multiplier` config key
+    // (unchanged) which the TM/BGG fetchers multiply into their delay
+    // constants. CRAWL_SPEED_PRESETS + crawlSpeedLabelForMultiplier come
+    // from 00-config.js.
+    ensureCrawlSpeedStyle();
+    const activeLabel = crawlSpeedLabelForMultiplier(cfg.pacing_multiplier);
+    const crawlChip = el('span', null, {
+      className: 'bsnz-seg-chip',
+      text: activeLabel.charAt(0).toUpperCase() + activeLabel.slice(1)
     });
-    const paceRow = el('div', { display: 'flex', alignItems: 'center' });
-    paceRow.append(paceSlider, paceVal);
+    const crawlLabel = el('div', { fontWeight: '600' });
+    crawlLabel.append(document.createTextNode('Crawl speed'), crawlChip);
+    const crawlSeg = el('fieldset', null, { className: 'bsnz-seg' });
+    for (const key of Object.keys(CRAWL_SPEED_PRESETS)) {
+      const id = `bsnz-crawl-${key}`;
+      const radio = el('input', null, {
+        type: 'radio', name: 'bsnz-crawl-speed', id, value: key,
+        checked: key === activeLabel,
+        on: { change: () => {
+          if (!radio.checked) return;
+          saveConfigKey('pacing_multiplier', CRAWL_SPEED_PRESETS[key]);
+          crawlChip.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+        }}
+      });
+      const lbl = el('label', null, {
+        htmlFor: id,
+        text: key.charAt(0).toUpperCase() + key.slice(1)
+      });
+      crawlSeg.append(radio, lbl);
+    }
 
     // Clear-all (two-step)
     const clearWrap = el('div', { borderTop: '1px solid #eee', paddingTop: '10px' });
@@ -574,7 +649,7 @@
       patLabel, patStatus, patInput, patBtnRow,
       tmInfo, tmInfoHint,
       autoRow,
-      paceLabel, paceRow,
+      crawlLabel, crawlSeg,
       clearWrap
     );
     overlay.append(dialog);

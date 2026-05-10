@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.3
+// @version      0.3.4
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.3';
+  const VERSION = '0.3.4';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -61,6 +61,33 @@
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
   const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
   const TM_MAX_RETRIES_PER_PAGE = 3;  // retries per TM page on transient errors (429/502/503/504); after exhaustion, skip the page with a warning rather than abort the run.
+
+  // Crawl-speed presets. Terminology + multiplier values mirror tm-bgbf's
+  // CRAWL_SPEED_PRESETS (tprmky/tm-bgbf-src/01-constants.js — delayMultiplier
+  // field). Internally the picked value is stored as `pacing_multiplier` and
+  // multiplied into TM_REQUEST_DELAY_MS / BGG_API_REQUEST_DELAY_MS by the TM
+  // and BGG fetchers; the segmented control in the settings dialog is purely
+  // a UI rename of the existing pacing knob.
+  const CRAWL_SPEED_PRESETS = {
+    fastest:  1.0,
+    balanced: 1.75,
+    safest:   3.5
+  };
+  const CRAWL_SPEED_DEFAULT = 'balanced';
+
+  // Map a stored numeric pacing_multiplier back to the closest preset label.
+  // Round to the nearest preset value rather than requiring exact match, so
+  // legacy stored values (e.g. 2.0 from the old slider) still resolve cleanly.
+  function crawlSpeedLabelForMultiplier(m) {
+    const entries = Object.entries(CRAWL_SPEED_PRESETS);
+    let best = entries[0];
+    let bestDist = Infinity;
+    for (const [label, val] of entries) {
+      const d = Math.abs(val - m);
+      if (d < bestDist) { bestDist = d; best = [label, val]; }
+    }
+    return best[0];
+  }
 
   // --- Trade Me category coverage ------------------------------------------
   // Hardcoded list of TM subcategory paths the scraper walks per run. Ported
