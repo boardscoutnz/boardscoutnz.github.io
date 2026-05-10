@@ -1,9 +1,9 @@
 # Tampermonkey scripts
 
-This folder holds the two userscripts the project relies on for data
+This folder holds the userscripts the project relies on for data
 acquisition. The website itself only ever reads the static JSON files
-they produce — neither script runs in the browser context that serves
-`index.html`.
+they produce — none of these scripts runs in the browser context that
+serves `index.html`.
 
 ## Contents
 
@@ -12,7 +12,9 @@ they produce — neither script runs in the browser context that serves
 | `tm-bgbf.user.js`         | **Trade Me Board Games Bulk Fetcher** — single-file deployable, **assembled** from the sources in `tm-bgbf-src/` by `build.sh`. Edit the source files, not this. |
 | `tm-bgbf-src/`            | The 18 source pieces that `build.sh` concatenates into `tm-bgbf.user.js`. See the module map below. |
 | `bgg-ranks-exporter.user.js` | **BGG Ranks Exporter** — single-file userscript, kept as one file (small enough that splitting buys nothing). Run it on a BoardGameGeek browse page to walk pages and export a ranks JSON. |
-| `build.sh`                | Reassembles `tm-bgbf.user.js` from `tm-bgbf-src/`. |
+| `bsnz-pipeline.user.js`   | **BSNZ Pipeline** (in-progress; see implementation-plan steps 3–7) — single-file deployable, **assembled** from `bsnz-pipeline-src/` by `build.sh`. Scrapes TM, enriches with BGG, commits `data/bsnz.json`. The whole script runs inside one shared IIFE: `00-config.js` opens it and `06-orchestrator.js` (Step 7) closes it, so source files in between are not independently valid JavaScript. |
+| `bsnz-pipeline-src/`      | Source modules concatenated into `bsnz-pipeline.user.js`. As of Step 3: `00-config.js` (UserScript header, constants, `BSNZ` state, `loadConfig`/`saveConfigKey`/`clearAllConfig`, `log`) and `01-ui.js` (floating control panel, settings dialog, GM menu commands). |
+| `build.sh`                | Reassembles both `tm-bgbf.user.js` (from `tm-bgbf-src/`) and `bsnz-pipeline.user.js` (from `bsnz-pipeline-src/`). |
 
 The split-source / single-deployable pattern only applies to
 `tm-bgbf.user.js`; `bgg-ranks-exporter.user.js` is installed and edited
