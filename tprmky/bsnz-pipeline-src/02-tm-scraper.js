@@ -43,6 +43,14 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
+        if (added === 0) {
+          log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
+          break;
+        }
+        if (pageNum >= TM_MAX_PAGES_PER_SUBCAT) {
+          log('warn', `${subcat.slug}: hit hard cap of ${TM_MAX_PAGES_PER_SUBCAT} pages — stopping. Investigate whether this subcat genuinely has more listings.`);
+          break;
+        }
         pageUrl = nextUrl;
         pageNum++;
         if (pageUrl) {
