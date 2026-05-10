@@ -54,7 +54,7 @@
     const cogBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
-    }, { text: '⚙', title: 'Settings', on: { click: openSettings } });
+    }, { text: '⚙️', title: 'Settings', on: { click: openSettings } });
     const minBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
@@ -87,7 +87,7 @@
 
     // Stats grid
     bsnzUi.statsEl = el('div', {
-      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px',
+      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0px 10px',
       fontSize: '12px', color: '#333'
     });
     renderStats();
@@ -136,6 +136,19 @@
     return panel;
   }
 
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function formatStartedAt(d) {
+    if (!d) return '—';
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
+  function formatElapsed() {
+    if (!BSNZ.run_started_at) return '—';
+    const end = BSNZ.run_completed_at || new Date();
+    const totalSec = Math.max(0, Math.floor((end - BSNZ.run_started_at) / 1000));
+    const mm = Math.floor(totalSec / 60);
+    const ss = totalSec % 60;
+    return `${mm}:${pad2(ss)}`;
+  }
   function renderStats() {
     const s = BSNZ.stats;
     const rows = [
@@ -143,15 +156,26 @@
       ['BGG searched',   s.bgg_searched],
       ['BGG fetched',    s.bgg_fetched],
       ['Fuzzy matched',  s.fuzzy_matched],
-      ['Committed',      s.github_committed ? 'yes' : 'no']
+      ['Committed',      s.github_committed ? 'yes' : 'no'],
+      ['Started at',     formatStartedAt(BSNZ.run_started_at)],
+      ['Elapsed',        formatElapsed()]
     ];
     bsnzUi.statsEl.replaceChildren();
+    bsnzUi._elapsedValueEl = null;
     for (const [k, v] of rows) {
+      const valueEl = el('span',
+        { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
+        { text: String(v) });
+      if (k === 'Elapsed') bsnzUi._elapsedValueEl = valueEl;
       bsnzUi.statsEl.append(
         el('span', { color: '#666' }, { text: k }),
-        el('span', { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
-           { text: String(v) })
+        valueEl
       );
+    }
+  }
+  function updateElapsedDisplay() {
+    if (bsnzUi._elapsedValueEl) {
+      bsnzUi._elapsedValueEl.textContent = formatElapsed();
     }
   }
 
@@ -252,6 +276,11 @@
     bsnzUi.cancelBtn.style.display = 'inline-block';
     setFabRunning(true);
 
+    BSNZ.run_started_at   = new Date();
+    BSNZ.run_completed_at = null;
+    if (BSNZ._elapsedTimerId) clearInterval(BSNZ._elapsedTimerId);
+    BSNZ._elapsedTimerId  = setInterval(updateElapsedDisplay, 1000);
+
     BSNZ.stats.tm_scraped = 0;
     renderStats();
     setPhase('Scraping TM');
@@ -270,6 +299,12 @@
       log('error', 'Pipeline failed: ' + e.message);
       setPhase(e.message === 'aborted' ? 'Cancelled' : 'Error');
     } finally {
+      BSNZ.run_completed_at = new Date();
+      if (BSNZ._elapsedTimerId) {
+        clearInterval(BSNZ._elapsedTimerId);
+        BSNZ._elapsedTimerId = null;
+      }
+      updateElapsedDisplay();
       BSNZ.abortController = null;
       bsnzUi.cancelBtn.style.display = 'none';
       setFabRunning(false);
@@ -364,6 +399,14 @@
   // so this is cheap. Auto-scrolls to the newest entry unless the user has
   // scrolled up to inspect older lines (within ~20px of bottom counts as
   // "still following the tail"); preserves their scroll position otherwise.
+  function htmlEscape(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
   function renderLog() {
     if (!bsnzUi.logEl) return;
     const entries = BSNZ.log || [];
@@ -376,9 +419,19 @@
                    : entry.level === 'warn'  ? '#b7791f'
                    : entry.level === 'debug' ? '#666'
                    : '#1a1a1a';
-      elBox.append(el('div', { color: colour, marginBottom: '2px' }, {
-        text: `${entry.ts.slice(11, 19)} [${entry.level}] ${entry.msg}`
-      }));
+      const prefix = `${entry.ts.slice(11, 19)} [${entry.level}] `;
+      const escapedMsg = htmlEscape(entry.msg);
+      let html = htmlEscape(prefix) + escapedMsg;
+      if (entry.link && entry.link.href && entry.link.text) {
+        const escapedHref = htmlEscape(entry.link.href);
+        const escapedText = htmlEscape(entry.link.text);
+        html += ' ' + '<a href="' + escapedHref +
+                '" target="_blank" rel="noreferrer">' +
+                escapedText + '</a>';
+      }
+      elBox.append(el('div', {
+        color: colour, marginBottom: '2px', lineHeight: '12px'
+      }, { html }));
     }
     if (wasNearBottom) elBox.scrollTop = elBox.scrollHeight;
   }

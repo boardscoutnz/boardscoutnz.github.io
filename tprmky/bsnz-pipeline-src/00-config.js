@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.6
+// @version      0.3.7
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.6';
+  const VERSION = '0.3.7';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -97,6 +97,9 @@
   // emitted by 02-tm-scraper.js is tagged with the slug of the first subcat
   // it was found in (dedupe is first-subcat-wins across the 8 paths).
   const TM_ORIGIN = 'https://www.trademe.co.nz';
+  // Stripped from the front of subcat URLs when rendered in the log link text,
+  // so the visible label is the leaf path rather than the full origin tree.
+  const TM_DISPLAY_PREFIX_STRIP = 'https://www.trademe.co.nz/a/marketplace/toys-models';
   const TM_SUBCATS = [
     { slug: 'card-games',          name: 'Card games',
       path: '/a/marketplace/toys-models/games-puzzles-tricks/card-games' },
@@ -169,36 +172,27 @@
   // `window.bsnzOnLogEntry` to subscribe; if it's not set yet (early boot)
   // we just append to BSNZ.log and the UI will render when it initialises.
   //
-  // opts.mergeKey: if the immediately preceding entry has the same mergeKey,
-  // mutate that entry's ts/msg/level in place rather than appending. Lets
-  // callers collapse a chatty rolling status (e.g. "fetching page 1", "page 2",
-  // …) into a single line that updates as it progresses. Any intervening log
-  // call (different mergeKey, or unkeyed) breaks the chain so the next keyed
-  // call starts a fresh entry.
+  // opts.consoleMsg: alternative message for the browser console only. The
+  // panel-rendered text always uses msg; consoleMsg lets a caller keep verbose
+  // detail in DevTools while showing a streamlined line in the panel.
+  // opts.link: optional structured { text, href } rendered as an <a> after
+  // msg in the panel. Structured (not markdown) so the renderer can HTML-escape
+  // both fields and prevent XSS from arbitrary message content.
   const LOG_CAP = 500;
   function log(level, msg, opts) {
-    const mergeKey = opts && opts.mergeKey;
-    const last = BSNZ.log[BSNZ.log.length - 1];
-    let entry;
-    if (mergeKey && last && last.mergeKey === mergeKey) {
-      last.ts    = new Date().toISOString();
-      last.msg   = String(msg);
-      last.level = level;
-      entry = last;
-    } else {
-      entry = {
-        ts:       new Date().toISOString(),
-        level,
-        msg:      String(msg),
-        mergeKey: mergeKey
-      };
-      BSNZ.log.push(entry);
-      while (BSNZ.log.length > LOG_CAP) BSNZ.log.shift();
-    }
+    const entry = {
+      ts:    new Date().toISOString(),
+      level,
+      msg:   String(msg),
+      link:  (opts && opts.link) || null
+    };
+    BSNZ.log.push(entry);
+    while (BSNZ.log.length > LOG_CAP) BSNZ.log.shift();
     const consoleFn = level === 'error' ? 'error'
                     : level === 'warn'  ? 'warn'
                     : 'log';
-    console[consoleFn](`[bsnz:${level}]`, msg);
+    const consoleText = (opts && opts.consoleMsg) || msg;
+    console[consoleFn](`[bsnz:${level}]`, consoleText);
     if (typeof window.bsnzOnLogEntry === 'function') {
       try { window.bsnzOnLogEntry(entry); } catch (_) { /* ignore UI errors */ }
     }
