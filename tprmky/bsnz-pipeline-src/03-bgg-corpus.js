@@ -298,6 +298,10 @@
     const maxRank = BSNZ.config.bgg_corpus_max_rank;
     const force   = !!BSNZ.config.bgg_corpus_force_refresh;
     const cached  = getCachedCorpus();
+    // Capture before any state mutation so the run-history record reflects
+    // the actual decision (cache vs network).
+    const wasCacheHit = !force && isCacheFresh(cached, ttlDays);
+    runHistoryStartPhase('bgg_corpus_refresh');
 
     let record;
     if (!force && isCacheFresh(cached, ttlDays)) {
@@ -338,4 +342,8 @@
     log('info',
       `Corpus indexed: ${idx.byNormName.size} normalised names, ` +
       `${idx.tokenToEntryIdx.size} unique tokens`);
+    runHistoryEndPhase('bgg_corpus_refresh', {
+      games_count: record.games.length,
+      cache_hit: wasCacheHit
+    });
   }
