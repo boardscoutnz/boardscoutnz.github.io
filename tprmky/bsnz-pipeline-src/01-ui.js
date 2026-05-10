@@ -227,9 +227,10 @@
     if (!bsnzUi.statusEl) return;
     if (phase === 'scrape') {
       setProgressIndeterminate(true);
+      const slug = (info && info.subcat) || '…';
       const n = (info && info.pageNum) || '?';
       const added = (info && info.addedCount) != null ? info.addedCount : '?';
-      setPhase(`Scraping TM page ${n} (+${added})`);
+      setPhase(`Scraping ${slug} page ${n} (+${added})`);
       renderStats();
     }
   };
@@ -340,14 +341,15 @@
     }, { text: 'Test PAT', on: { click: () => testPat(patInput.value.trim() || cfg.pat) } });
     patBtnRow.append(savePatBtn, testPatBtn);
 
-    // TM category URL
-    const tmLabel = el('div', { fontWeight: '600' }, { text: 'TM category URL' });
-    const tmInput = el('input', {
-      width: '100%', padding: '6px', boxSizing: 'border-box',
-      border: '1px solid #aaa', borderRadius: '4px'
-    }, { type: 'text', value: cfg.tm_category_url, on: { change: () => {
-      saveConfigKey('tm_category_url', tmInput.value.trim());
-    }}});
+    // TM categories — hardcoded list, no longer user-configurable. The 8
+    // subcat paths live in TM_SUBCATS in 00-config.js; the scraper walks them
+    // in order with first-subcat-wins dedupe.
+    const tmInfo = el('div', { fontSize: '12px', color: '#333', lineHeight: '1.4' }, {
+      text: 'TM categories (hardcoded): 8 subcats — card-games, childrens-games, dice-games, party-games, strategy-war-games, word-games, board-games/other, games-puzzles/other'
+    });
+    const tmInfoHint = el('div', { fontSize: '11px', color: '#666' }, {
+      text: '(see docs/13-pipeline-pre-merged-data.md)'
+    });
 
     // Auto-commit
     const autoRow = el('label', {
@@ -401,7 +403,7 @@
     dialog.append(
       titleRow,
       patLabel, patStatus, patInput, patBtnRow,
-      tmLabel, tmInput,
+      tmInfo, tmInfoHint,
       autoRow,
       paceLabel, paceRow,
       clearWrap

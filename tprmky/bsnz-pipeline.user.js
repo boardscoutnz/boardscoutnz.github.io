@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.2.0
+// @version      0.2.1
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -32,8 +32,8 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.2.0';
-  const SCHEMA_VERSION = '1.0.0';
+  const VERSION = '0.2.1';
+  const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
   const REPO_OWNER = 'boardscoutnz';
@@ -56,6 +56,33 @@
   const BGG_RETRY_BASE_MS    = 3000;   // for HTTP 202 (BGG queues responses)
   const BGG_MAX_RETRIES      = 5;
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
+
+  // --- Trade Me category coverage ------------------------------------------
+  // Hardcoded list of TM subcategory paths the scraper walks per run. Ported
+  // verbatim from the legacy tprmky/tm-bgbf-src/01-constants.js CATEGORIES
+  // array — keep in sync. Note: card-games and games-puzzles-other sit at the
+  // games-puzzles-tricks parent level, NOT under board-games. Each listing
+  // emitted by 02-tm-scraper.js is tagged with the slug of the first subcat
+  // it was found in (dedupe is first-subcat-wins across the 8 paths).
+  const TM_ORIGIN = 'https://www.trademe.co.nz';
+  const TM_SUBCATS = [
+    { slug: 'card-games',          name: 'Card games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/card-games' },
+    { slug: 'childrens-games',     name: "Children's games",
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/childrens-games' },
+    { slug: 'dice-games',          name: 'Dice games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/dice-games' },
+    { slug: 'party-games',         name: 'Party games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/party-games' },
+    { slug: 'strategy-war-games',  name: 'Strategy & war games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/strategy-war-games' },
+    { slug: 'word-games',          name: 'Word games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/word-games' },
+    { slug: 'other',               name: 'Board games — Other',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/other' },
+    { slug: 'games-puzzles-other', name: 'Games & Puzzles — Other',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/other' }
+  ];
 
   // --- Global state holder --------------------------------------------------
   // One mutable object that every later module reads and writes. Kept as a
@@ -82,8 +109,6 @@
     return {
       pat:               GM_getValue('gh_pat',               ''),
       pat_set_at:        GM_getValue('gh_pat_set_at',        null),
-      tm_category_url:   GM_getValue('tm_category_url',
-                            'https://www.trademe.co.nz/a/marketplace/toys-models/board-games'),
       auto_commit:       GM_getValue('auto_commit',          false),
       pacing_multiplier: GM_getValue('pacing_multiplier',    1.0)
     };
@@ -353,9 +378,10 @@
     if (!bsnzUi.statusEl) return;
     if (phase === 'scrape') {
       setProgressIndeterminate(true);
+      const slug = (info && info.subcat) || '…';
       const n = (info && info.pageNum) || '?';
       const added = (info && info.addedCount) != null ? info.addedCount : '?';
-      setPhase(`Scraping TM page ${n} (+${added})`);
+      setPhase(`Scraping ${slug} page ${n} (+${added})`);
       renderStats();
     }
   };
@@ -466,14 +492,15 @@
     }, { text: 'Test PAT', on: { click: () => testPat(patInput.value.trim() || cfg.pat) } });
     patBtnRow.append(savePatBtn, testPatBtn);
 
-    // TM category URL
-    const tmLabel = el('div', { fontWeight: '600' }, { text: 'TM category URL' });
-    const tmInput = el('input', {
-      width: '100%', padding: '6px', boxSizing: 'border-box',
-      border: '1px solid #aaa', borderRadius: '4px'
-    }, { type: 'text', value: cfg.tm_category_url, on: { change: () => {
-      saveConfigKey('tm_category_url', tmInput.value.trim());
-    }}});
+    // TM categories — hardcoded list, no longer user-configurable. The 8
+    // subcat paths live in TM_SUBCATS in 00-config.js; the scraper walks them
+    // in order with first-subcat-wins dedupe.
+    const tmInfo = el('div', { fontSize: '12px', color: '#333', lineHeight: '1.4' }, {
+      text: 'TM categories (hardcoded): 8 subcats — card-games, childrens-games, dice-games, party-games, strategy-war-games, word-games, board-games/other, games-puzzles/other'
+    });
+    const tmInfoHint = el('div', { fontSize: '11px', color: '#666' }, {
+      text: '(see docs/13-pipeline-pre-merged-data.md)'
+    });
 
     // Auto-commit
     const autoRow = el('label', {
@@ -527,7 +554,7 @@
     dialog.append(
       titleRow,
       patLabel, patStatus, patInput, patBtnRow,
-      tmLabel, tmInput,
+      tmInfo, tmInfoHint,
       autoRow,
       paceLabel, paceRow,
       clearWrap
@@ -607,47 +634,63 @@
   }
 // tprmky/bsnz-pipeline-src/02-tm-scraper.js
 // ===== TM scraper module =====
-// Inputs:  BSNZ.config.tm_category_url
-// Outputs: BSNZ.tm_listings = [ {tm_id, tm_url, tm_title, ...}, ... ]
+// Inputs:  TM_SUBCATS (from 00-config.js) — 8 hardcoded subcategory paths.
+// Outputs: BSNZ.tm_listings = [ {tm_id, tm_url, tm_title, ..., tm_subcat}, ... ]
 // Side effects: updates BSNZ.stats.tm_scraped, calls log() and updateProgress().
 //
 // Runs inside the shared IIFE opened in 00-config.js — so TM_REQUEST_DELAY_MS,
-// BSNZ, log, etc. resolve from closure scope.
+// TM_ORIGIN, TM_SUBCATS, BSNZ, log, etc. resolve from closure scope.
 //
 // Extraction strategy. The legacy TM scraper (tprmky/tm-bgbf-src/) showed
 // that TM's search-result pages are Next.js-rendered: the listing array is
 // embedded as JSON inside <script id="__NEXT_DATA__">, with a DOM card
 // fallback when that script is absent. We re-use that two-tier approach
 // here, but emit the bsnz.json record shape (tm_id / tm_url / tm_title /
-// tm_price_nzd / tm_buy_now_nzd / tm_condition / tm_location) — see
-// docs/13-pipeline-pre-merged-data.md.
-
-  const TM_ORIGIN = 'https://www.trademe.co.nz';
+// tm_price_nzd / tm_buy_now_nzd / tm_condition / tm_location / tm_subcat) —
+// see docs/13-pipeline-pre-merged-data.md.
 
   async function runScrapePhase(signal) {
     log('info', 'TM scrape phase starting');
     BSNZ.tm_listings = [];
     BSNZ.stats.tm_scraped = 0;
-    const startUrl = BSNZ.config.tm_category_url;
-    if (!startUrl) throw new Error('tm_category_url not configured');
+    // Dedupe lives outside the subcat loop: first-subcat-wins, so a listing
+    // that appears in both card-games and games-puzzles-other (TM lets sellers
+    // cross-list) is tagged with the slug it was first seen in.
+    const seen = new Set();
 
-    let pageUrl = startUrl;
-    let pageNum = 1;
-    while (pageUrl) {
-      if (signal.aborted) throw new Error('aborted');
-      log('info', `Fetching TM page ${pageNum}: ${pageUrl}`);
-      const html = await fetchTMPageHtml(pageUrl, signal);
-      const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
-      BSNZ.tm_listings.push(...listings);
-      BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
-      tmUpdateProgress('scrape', pageNum, listings.length);
-      pageUrl = nextUrl;
-      pageNum++;
-      if (pageUrl) {
+    for (let i = 0; i < TM_SUBCATS.length; i++) {
+      const subcat = TM_SUBCATS[i];
+      let pageUrl = TM_ORIGIN + subcat.path;
+      let pageNum = 1;
+      while (pageUrl) {
+        if (signal.aborted) throw new Error('aborted');
+        log('info', `Fetching ${subcat.slug} page ${pageNum}: ${pageUrl}`);
+        const html = await fetchTMPageHtml(pageUrl, signal);
+        const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
+        let added = 0;
+        for (const listing of listings) {
+          if (seen.has(listing.tm_id)) continue;
+          seen.add(listing.tm_id);
+          listing.tm_subcat = subcat.slug;
+          BSNZ.tm_listings.push(listing);
+          added++;
+        }
+        BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
+        tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
+        pageUrl = nextUrl;
+        pageNum++;
+        if (pageUrl) {
+          await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
+        }
+      }
+      // Pace between subcats too — back-to-back hits on the same TM origin
+      // would defeat the polite-rate guard. Skip the trailing sleep after the
+      // last subcat so the phase ends promptly.
+      if (i < TM_SUBCATS.length - 1) {
         await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
       }
     }
-    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings`);
+    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`);
   }
 
   // GM_xmlhttpRequest doesn't accept an AbortSignal natively; it returns a
@@ -897,11 +940,10 @@
     });
   }
 
-  function tmUpdateProgress(phase, pageNum, addedCount) {
+  function tmUpdateProgress(phase, info) {
     if (typeof window.bsnzUpdateProgress === 'function') {
       window.bsnzUpdateProgress(phase, {
-        pageNum,
-        addedCount,
+        ...info,
         total: BSNZ.stats.tm_scraped
       });
     }

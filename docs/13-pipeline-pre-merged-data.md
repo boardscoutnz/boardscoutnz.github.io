@@ -13,7 +13,7 @@ enrichment at render time.
 
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "generated_at": "2026-05-10T14:30:00Z",
   "bgg_corpus_fetched_at": "2026-05-10T14:25:00Z",
   "bgg_api_enrichment_run": true,
@@ -33,6 +33,7 @@ enrichment at render time.
       "tm_buy_now_nzd": 60.00,
       "tm_condition": "Used",
       "tm_location": "Auckland",
+      "tm_subcat": "strategy-war-games",
 
       "bgg_id": 266524,
       "bgg_match_method": "exact_match",
@@ -78,11 +79,16 @@ enrichment at render time.
 unmatched listings alike):
 
 `tm_id`, `tm_url`, `tm_title`, `tm_price_nzd`, `tm_buy_now_nzd`,
-`tm_condition`, `tm_location`.
+`tm_condition`, `tm_location`, `tm_subcat`.
 
 These are the only TM fields the userscript reliably extracts. Earlier drafts
 of this schema included `tm_seller` / `tm_listed_at` / `tm_closes_at` /
 `tm_image_url` — those are explicitly out of scope.
+
+- `tm_subcat` — Trade Me subcategory slug — one of the 8 values in
+  `TM_SUBCATS` in `00-config.js`. Set during scraping; identifies which subcat
+  the listing was first found in (dedupe is first-subcat-wins across the 8
+  paths).
 
 **BGG-CSV-sourced** (read from the BGG ranks CSV dump fetched in-userscript
 by `03-bgg-corpus.js`; populated whenever a match exists; refreshed when the
@@ -163,16 +169,22 @@ mirrors `tprmky/tm-bgbf-src/`:
   future `03-…` through `06-…`).
 
 The TM scraper module (`02-tm-scraper.js`, added in Step 4 of the pipeline
-plan) exposes one entry point — `runScrapePhase(signal)` — which paginates
-`BSNZ.config.tm_category_url` via `?page=N`, fetches each page through
-`GM_xmlhttpRequest`, and parses the embedded `__NEXT_DATA__` JSON (with a
-DOM-card selector fallback ported from `tprmky/tm-bgbf-src/08-extraction.js`).
-It writes each listing-card record into `BSNZ.tm_listings` using the
-TM-sourced field names defined above (`tm_id`, `tm_url`, `tm_title`,
-`tm_price_nzd`, `tm_buy_now_nzd`, `tm_condition`, `tm_location`) and
-increments `BSNZ.stats.tm_scraped`. Page-to-page pacing is
-`BSNZ.config.pacing_multiplier × TM_REQUEST_DELAY_MS`. The phase honours an
-`AbortSignal` — `01-ui.js` creates a fresh `AbortController` on each Run
+plan) exposes one entry point — `runScrapePhase(signal)` — which walks the 8
+hardcoded subcategory paths in `TM_SUBCATS` (defined in `00-config.js`,
+ported verbatim from the legacy `tprmky/tm-bgbf-src/01-constants.js`
+`CATEGORIES` array). For each subcat it starts at `TM_ORIGIN + subcat.path`
+and paginates via `?page=N`, fetching each page through `GM_xmlhttpRequest`
+and parsing the embedded `__NEXT_DATA__` JSON (with a DOM-card selector
+fallback ported from `tprmky/tm-bgbf-src/08-extraction.js`). Listings are
+deduped by `tm_id` across all 8 subcats (first-subcat-wins) and each emitted
+record is tagged with `tm_subcat: subcat.slug` in the post-dedupe loop —
+the parsers themselves stay subcat-agnostic. Records are written into
+`BSNZ.tm_listings` using the TM-sourced field names defined above (`tm_id`,
+`tm_url`, `tm_title`, `tm_price_nzd`, `tm_buy_now_nzd`, `tm_condition`,
+`tm_location`, `tm_subcat`) and `BSNZ.stats.tm_scraped` is updated after
+each page. Pacing — both page-to-page within a subcat and between subcats —
+is `BSNZ.config.pacing_multiplier × TM_REQUEST_DELAY_MS`. The phase honours
+an `AbortSignal` — `01-ui.js` creates a fresh `AbortController` on each Run
 click, stores it as `BSNZ.abortController`, and the Cancel button calls
 `abort()`.
 

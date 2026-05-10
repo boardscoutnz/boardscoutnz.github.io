@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.2.0
+// @version      0.2.1
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -31,8 +31,8 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.2.0';
-  const SCHEMA_VERSION = '1.0.0';
+  const VERSION = '0.2.1';
+  const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
   const REPO_OWNER = 'boardscoutnz';
@@ -55,6 +55,33 @@
   const BGG_RETRY_BASE_MS    = 3000;   // for HTTP 202 (BGG queues responses)
   const BGG_MAX_RETRIES      = 5;
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
+
+  // --- Trade Me category coverage ------------------------------------------
+  // Hardcoded list of TM subcategory paths the scraper walks per run. Ported
+  // verbatim from the legacy tprmky/tm-bgbf-src/01-constants.js CATEGORIES
+  // array — keep in sync. Note: card-games and games-puzzles-other sit at the
+  // games-puzzles-tricks parent level, NOT under board-games. Each listing
+  // emitted by 02-tm-scraper.js is tagged with the slug of the first subcat
+  // it was found in (dedupe is first-subcat-wins across the 8 paths).
+  const TM_ORIGIN = 'https://www.trademe.co.nz';
+  const TM_SUBCATS = [
+    { slug: 'card-games',          name: 'Card games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/card-games' },
+    { slug: 'childrens-games',     name: "Children's games",
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/childrens-games' },
+    { slug: 'dice-games',          name: 'Dice games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/dice-games' },
+    { slug: 'party-games',         name: 'Party games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/party-games' },
+    { slug: 'strategy-war-games',  name: 'Strategy & war games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/strategy-war-games' },
+    { slug: 'word-games',          name: 'Word games',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/word-games' },
+    { slug: 'other',               name: 'Board games — Other',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/board-games/other' },
+    { slug: 'games-puzzles-other', name: 'Games & Puzzles — Other',
+      path: '/a/marketplace/toys-models/games-puzzles-tricks/other' }
+  ];
 
   // --- Global state holder --------------------------------------------------
   // One mutable object that every later module reads and writes. Kept as a
@@ -81,8 +108,6 @@
     return {
       pat:               GM_getValue('gh_pat',               ''),
       pat_set_at:        GM_getValue('gh_pat_set_at',        null),
-      tm_category_url:   GM_getValue('tm_category_url',
-                            'https://www.trademe.co.nz/a/marketplace/toys-models/board-games'),
       auto_commit:       GM_getValue('auto_commit',          false),
       pacing_multiplier: GM_getValue('pacing_multiplier',    1.0)
     };
