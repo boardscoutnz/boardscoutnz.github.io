@@ -198,7 +198,11 @@
     BSNZ.abortController = new AbortController();
     try {
       await runScrapePhase(BSNZ.abortController.signal);
-      log('info', 'Scrape complete; later phases not yet implemented.');
+      setPhase('Refreshing BGG corpus');
+      await runCorpusRefreshPhase(BSNZ.abortController.signal);
+      // Step 6 will insert the matcher here.
+      // Step 7's orchestrator will call bggFetchThings() conditionally and load the previous bsnz.json.
+      log('info', 'Scrape + corpus complete; later phases not yet implemented.');
       setPhase('Done');
     } catch (e) {
       log('error', 'Pipeline failed: ' + e.message);

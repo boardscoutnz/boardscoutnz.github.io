@@ -92,12 +92,9 @@ of this schema included `tm_seller` / `tm_listed_at` / `tm_closes_at` /
 
 **BGG-CSV-sourced** (read from the BGG ranks CSV dump fetched in-userscript
 by `03-bgg-corpus.js`; populated whenever a match exists; refreshed when the
-`GM_setValue` cache is older than the configured TTL or the user clicks
-Force-refresh):
+cache is older than the configured TTL or the user clicks Force-refresh):
 
-`bgg_id` (int, BGG's primary key), `bgg_name` (BGG primary name), `bgg_rank`
-(overall rank), `bgg_rating_average` (BGG's displayed weighted-average
-rating).
+- `bgg_id`, `bgg_name`, `bgg_rank`, `bgg_rating_average`.
 
 **Match metadata**:
 
@@ -128,6 +125,19 @@ strings).
 Listings with `bgg_match_method: "unmatched"` have `bgg_id: null` and all
 `bgg_*` fields null/empty; the static site still renders them with their
 `tm_*` fields populated.
+
+### Sourcing summary
+
+TM fields come from scraping the authenticated Trade Me board-games category
+in the user's browser tab. BGG-CSV fields (id, name, rank, rating_average)
+come from the BGG ranks ZIP dump fetched directly by `03-bgg-corpus.js` from
+`https://boardgamegeek.com/data_dumps/bg_ranks` (using the user's BGG session
+cookies), unzipped with `fflate`, parsed, and cached in `GM_setValue` with a
+configurable TTL (default 7 days). BGG-API fields (weight, players,
+playing_time, plus the optional min_age / categories / mechanics) come from
+the BGG XML `/thing` endpoint ONLY when the user has
+`enable_bgg_api_enrichment` checked. When unchecked, those values are carried
+over from the previous `data/bsnz.json` keyed by `bgg_id`.
 
 ### Schema versioning
 
