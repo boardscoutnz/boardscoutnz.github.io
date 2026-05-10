@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.5
+// @version      0.3.6
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.5';
+  const VERSION = '0.3.6';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -167,19 +167,38 @@
   // --- Logger ---------------------------------------------------------------
   // Levels: 'info' | 'warn' | 'error' | 'debug'. The UI module sets
   // `window.bsnzOnLogEntry` to subscribe; if it's not set yet (early boot)
-  // we just append to BSNZ.log and the UI will render the tail when it
-  // initialises.
-  function log(level, ...parts) {
-    const entry = {
-      ts:    new Date().toISOString(),
-      level,
-      msg:   parts.map(String).join(' ')
-    };
-    BSNZ.log.push(entry);
+  // we just append to BSNZ.log and the UI will render when it initialises.
+  //
+  // opts.mergeKey: if the immediately preceding entry has the same mergeKey,
+  // mutate that entry's ts/msg/level in place rather than appending. Lets
+  // callers collapse a chatty rolling status (e.g. "fetching page 1", "page 2",
+  // …) into a single line that updates as it progresses. Any intervening log
+  // call (different mergeKey, or unkeyed) breaks the chain so the next keyed
+  // call starts a fresh entry.
+  const LOG_CAP = 500;
+  function log(level, msg, opts) {
+    const mergeKey = opts && opts.mergeKey;
+    const last = BSNZ.log[BSNZ.log.length - 1];
+    let entry;
+    if (mergeKey && last && last.mergeKey === mergeKey) {
+      last.ts    = new Date().toISOString();
+      last.msg   = String(msg);
+      last.level = level;
+      entry = last;
+    } else {
+      entry = {
+        ts:       new Date().toISOString(),
+        level,
+        msg:      String(msg),
+        mergeKey: mergeKey
+      };
+      BSNZ.log.push(entry);
+      while (BSNZ.log.length > LOG_CAP) BSNZ.log.shift();
+    }
     const consoleFn = level === 'error' ? 'error'
                     : level === 'warn'  ? 'warn'
                     : 'log';
-    console[consoleFn](`[bsnz:${level}]`, ...parts);
+    console[consoleFn](`[bsnz:${level}]`, msg);
     if (typeof window.bsnzOnLogEntry === 'function') {
       try { window.bsnzOnLogEntry(entry); } catch (_) { /* ignore UI errors */ }
     }

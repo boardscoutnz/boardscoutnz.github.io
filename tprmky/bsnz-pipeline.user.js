@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.5
+// @version      0.3.6
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.5';
+  const VERSION = '0.3.6';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -168,19 +168,38 @@
   // --- Logger ---------------------------------------------------------------
   // Levels: 'info' | 'warn' | 'error' | 'debug'. The UI module sets
   // `window.bsnzOnLogEntry` to subscribe; if it's not set yet (early boot)
-  // we just append to BSNZ.log and the UI will render the tail when it
-  // initialises.
-  function log(level, ...parts) {
-    const entry = {
-      ts:    new Date().toISOString(),
-      level,
-      msg:   parts.map(String).join(' ')
-    };
-    BSNZ.log.push(entry);
+  // we just append to BSNZ.log and the UI will render when it initialises.
+  //
+  // opts.mergeKey: if the immediately preceding entry has the same mergeKey,
+  // mutate that entry's ts/msg/level in place rather than appending. Lets
+  // callers collapse a chatty rolling status (e.g. "fetching page 1", "page 2",
+  // …) into a single line that updates as it progresses. Any intervening log
+  // call (different mergeKey, or unkeyed) breaks the chain so the next keyed
+  // call starts a fresh entry.
+  const LOG_CAP = 500;
+  function log(level, msg, opts) {
+    const mergeKey = opts && opts.mergeKey;
+    const last = BSNZ.log[BSNZ.log.length - 1];
+    let entry;
+    if (mergeKey && last && last.mergeKey === mergeKey) {
+      last.ts    = new Date().toISOString();
+      last.msg   = String(msg);
+      last.level = level;
+      entry = last;
+    } else {
+      entry = {
+        ts:       new Date().toISOString(),
+        level,
+        msg:      String(msg),
+        mergeKey: mergeKey
+      };
+      BSNZ.log.push(entry);
+      while (BSNZ.log.length > LOG_CAP) BSNZ.log.shift();
+    }
     const consoleFn = level === 'error' ? 'error'
                     : level === 'warn'  ? 'warn'
                     : 'log';
-    console[consoleFn](`[bsnz:${level}]`, ...parts);
+    console[consoleFn](`[bsnz:${level}]`, msg);
     if (typeof window.bsnzOnLogEntry === 'function') {
       try { window.bsnzOnLogEntry(entry); } catch (_) { /* ignore UI errors */ }
     }
@@ -284,14 +303,16 @@
     });
     renderStats();
 
-    // Log tail
+    // Full run log. Capped in memory at LOG_CAP entries (see 00-config.js);
+    // the box scrolls and auto-pins to the bottom unless the user has scrolled
+    // up to inspect older entries.
     const logHeader = el('div', { fontWeight: '600', fontSize: '12px' },
-      { text: 'Log (last 10):' });
+      { text: 'Log:' });
     bsnzUi.logEl = el('div', {
       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
       fontSize: '11px', background: '#f7f7f7',
       border: '1px solid #ddd', borderRadius: '4px',
-      padding: '6px', maxHeight: '160px', overflowY: 'auto',
+      padding: '6px', maxHeight: '30vh', overflowY: 'auto',
       whiteSpace: 'pre-wrap', wordBreak: 'break-word'
     });
 
@@ -550,21 +571,29 @@
   }
 
   // --- Log subscription -----------------------------------------------------
-  function appendLogEntry(entry) {
+  // Full re-render on every log call. BSNZ.log is capped (see 00-config.js)
+  // so this is cheap. Auto-scrolls to the newest entry unless the user has
+  // scrolled up to inspect older lines (within ~20px of bottom counts as
+  // "still following the tail"); preserves their scroll position otherwise.
+  function renderLog() {
     if (!bsnzUi.logEl) return;
-    const colour = entry.level === 'error' ? '#c0392b'
-                 : entry.level === 'warn'  ? '#b7791f'
-                 : entry.level === 'debug' ? '#666'
-                 : '#1a1a1a';
-    const line = el('div', { color: colour, marginBottom: '2px' }, {
-      text: `${entry.ts.slice(11, 19)} [${entry.level}] ${entry.msg}`
-    });
-    bsnzUi.logEl.prepend(line);
-    while (bsnzUi.logEl.childElementCount > 10) {
-      bsnzUi.logEl.removeChild(bsnzUi.logEl.lastChild);
+    const entries = BSNZ.log || [];
+    const elBox = bsnzUi.logEl;
+    const distFromBottom = elBox.scrollHeight - elBox.scrollTop - elBox.clientHeight;
+    const wasNearBottom = distFromBottom <= 20;
+    elBox.replaceChildren();
+    for (const entry of entries) {
+      const colour = entry.level === 'error' ? '#c0392b'
+                   : entry.level === 'warn'  ? '#b7791f'
+                   : entry.level === 'debug' ? '#666'
+                   : '#1a1a1a';
+      elBox.append(el('div', { color: colour, marginBottom: '2px' }, {
+        text: `${entry.ts.slice(11, 19)} [${entry.level}] ${entry.msg}`
+      }));
     }
+    if (wasNearBottom) elBox.scrollTop = elBox.scrollHeight;
   }
-  window.bsnzOnLogEntry = appendLogEntry;
+  window.bsnzOnLogEntry = renderLog;
 
   // --- Settings dialog ------------------------------------------------------
   let settingsOverlay = null;
@@ -775,9 +804,8 @@
     bsnzUi.fabEl = fab;
     minimisePanel();
 
-    // Replay any log entries that accumulated before the panel existed.
-    const tail = BSNZ.log.slice(-10);
-    for (const entry of tail) appendLogEntry(entry);
+    // Render any log entries that accumulated before the panel existed.
+    renderLog();
 
     log('info', 'Panel initialised.');
   }
@@ -833,9 +861,13 @@
       const subcat = TM_SUBCATS[i];
       let pageUrl = TM_ORIGIN + subcat.path;
       let pageNum = 1;
+      const pageStart = pageNum;
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
-        log('info', `Fetching ${subcat.slug} page ${pageNum}: ${pageUrl}`);
+        const pageRange = pageNum === pageStart ? `${pageNum}` : `${pageStart} - ${pageNum}`;
+        log('info', `Fetching ${subcat.slug} page ${pageRange}: ${pageUrl}`, {
+          mergeKey: `tm-fetch:${subcat.slug}`
+        });
         let html;
         try {
           html = await fetchTMPageHtml(pageUrl, signal);

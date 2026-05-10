@@ -28,9 +28,13 @@
       const subcat = TM_SUBCATS[i];
       let pageUrl = TM_ORIGIN + subcat.path;
       let pageNum = 1;
+      const pageStart = pageNum;
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
-        log('info', `Fetching ${subcat.slug} page ${pageNum}: ${pageUrl}`);
+        const pageRange = pageNum === pageStart ? `${pageNum}` : `${pageStart} - ${pageNum}`;
+        log('info', `Fetching ${subcat.slug} page ${pageRange}: ${pageUrl}`, {
+          mergeKey: `tm-fetch:${subcat.slug}`
+        });
         let html;
         try {
           html = await fetchTMPageHtml(pageUrl, signal);
