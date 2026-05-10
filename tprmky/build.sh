@@ -64,3 +64,42 @@ echo
 echo "✓ Wrote $OUT_FILE ($LINES lines, $SIZE bytes)"
 echo
 echo "Next step: install/refresh the script in Tampermonkey."
+
+# ---------------------------------------------------------------------------
+# bsnz-pipeline build branch
+# ---------------------------------------------------------------------------
+# Concatenates tprmky/bsnz-pipeline-src/*.js (lexical/numeric order) into
+# tprmky/bsnz-pipeline.user.js. Runs as a parallel block to the tm-bgbf
+# build above; does not share state with it.
+build_bsnz_pipeline() {
+  local src_dir="$HERE/bsnz-pipeline-src"
+  local out_file="$HERE/bsnz-pipeline.user.js"
+
+  if [[ ! -d "$src_dir" ]]; then
+    # Skip silently — developers without the new pipeline source dir
+    # should not be broken by this script.
+    return 0
+  fi
+
+  local src_files
+  mapfile -t src_files < <(cd "$src_dir" && ls *.js 2>/dev/null | sort)
+
+  if [[ ${#src_files[@]} -eq 0 ]]; then
+    echo "ERROR: no .js source files found in $src_dir" >&2
+    return 1
+  fi
+
+  {
+    echo "// Built from tprmky/bsnz-pipeline-src/ by tprmky/build.sh — DO NOT EDIT directly."
+  } > "$out_file"
+  for f in "${src_files[@]}"; do
+    cat "$src_dir/$f" >> "$out_file"
+  done
+
+  local lines
+  lines=$(wc -l < "$out_file" | tr -d ' ')
+  echo "✓ Wrote $out_file ($lines lines)"
+}
+
+echo
+build_bsnz_pipeline
