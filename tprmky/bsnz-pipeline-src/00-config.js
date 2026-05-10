@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.9
+// @version      0.4.0
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.9';
+  const VERSION = '0.4.0';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -59,7 +59,7 @@
   const BGG_RETRY_BASE_MS    = 3000;   // for HTTP 202 (BGG queues responses)
   const BGG_MAX_RETRIES      = 5;
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
-  const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
+  const TM_MAX_PAGES_PER_SUBCAT = 75;  // defensive fail-safe; primary termination is the absence of TM's next-page anchor in the SSR HTML (see 02-tm-scraper.js parseTMListingsPage). If this cap actually fires, TM's pagination markup likely changed.
   const TM_MAX_RETRIES_PER_PAGE = 3;  // retries per TM page on transient errors (429/502/503/504); after exhaustion, skip the page with a warning rather than abort the run.
 
   // GM_setValue key + cap for the persistent run-history log (see

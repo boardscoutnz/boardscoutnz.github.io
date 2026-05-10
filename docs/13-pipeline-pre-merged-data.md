@@ -198,6 +198,17 @@ an `AbortSignal` — `01-ui.js` creates a fresh `AbortController` on each Run
 click, stores it as `BSNZ.abortController`, and the Cancel button calls
 `abort()`.
 
+Termination signal (v0.4.0+). Each subcat stops when the SSR HTML for the
+current page lacks an `a[aria-label^="Next page"]` element — this is TM's
+own pagination widget, present on every real-inventory page and absent
+entirely past the end of the result set. The total result count is parsed
+once from the `h3.tm-search-header-result-count__heading` element on page 1
+("Showing N results", commas stripped) and is used purely for the per-subcat
+header log and a post-loop sanity summary; nothing depends on it for
+control flow. `TM_MAX_PAGES_PER_SUBCAT` (currently 75) remains as a
+defensive fail-safe — if it ever fires, TM's pagination markup likely
+changed and the parser's selectors need updating, which is logged at WARN.
+
 The IIFE closer lives in `99-footer.js` so every intermediate build artefact is
 syntactically valid JavaScript. Do not add `})();` to any other file, and do
 not add UserScript header directives outside `00-config.js`.
