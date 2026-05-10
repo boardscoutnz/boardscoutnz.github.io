@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.7
+// @version      0.3.8
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.7';
+  const VERSION = '0.3.8';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -642,6 +642,58 @@
   }
   window.bsnzOnLogEntry = renderLog;
 
+
+  // --- Init -----------------------------------------------------------------
+  function initPanel() {
+    if (document.getElementById('bsnz-panel')) return; // idempotent
+    if (!document.body) { // very early — defer
+      document.addEventListener('DOMContentLoaded', initPanel, { once: true });
+      return;
+    }
+    const panel = buildPanel();
+    document.body.appendChild(panel);
+
+    // FAB lives as a sibling of the panel. Built and attached unconditionally;
+    // the panel starts minimised so the FAB is the visible affordance on every
+    // page load (state intentionally not persisted across loads).
+    const fab = buildFab();
+    document.body.appendChild(fab);
+    bsnzUi.fabEl = fab;
+    minimisePanel();
+
+    // Render any log entries that accumulated before the panel existed.
+    renderLog();
+
+    log('info', 'Panel initialised.');
+  }
+
+  // GM menu commands — give the user a way back to the panel even if it's
+  // minimised or scrolled off-screen on a long TM page.
+  if (typeof GM_registerMenuCommand === 'function') {
+    GM_registerMenuCommand('Open BSNZ panel', () => {
+      if (!bsnzUi.panel) initPanel();
+      if (bsnzUi.minimised) restorePanel();
+      bsnzUi.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    GM_registerMenuCommand('Open BSNZ settings', () => {
+      if (!bsnzUi.panel) initPanel();
+      openSettings();
+    });
+  }
+
+  // The @run-at directive is document-idle, so DOM is normally ready. Keep
+  // the defensive readyState check in case a TM script blocks parsing.
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initPanel, { once: true });
+  } else {
+    initPanel();
+  }
+// tprmky/bsnz-pipeline-src/01a-settings.js
+// Settings dialog UI extracted from 01-ui.js. Runs inside the shared IIFE
+// opened in 00-config.js — references el(), log(), saveConfigKey(),
+// clearAllConfig(), BSNZ, REPO_OWNER/NAME, GITHUB_API, DATA_PUBLIC_URL from
+// closure scope.
+
   // --- Settings dialog ------------------------------------------------------
   let settingsOverlay = null;
   function openSettings() {
@@ -831,52 +883,6 @@
       },
       onerror: (e) => log('error', 'PAT test network error:', e && e.error || 'unknown')
     });
-  }
-
-  // --- Init -----------------------------------------------------------------
-  function initPanel() {
-    if (document.getElementById('bsnz-panel')) return; // idempotent
-    if (!document.body) { // very early — defer
-      document.addEventListener('DOMContentLoaded', initPanel, { once: true });
-      return;
-    }
-    const panel = buildPanel();
-    document.body.appendChild(panel);
-
-    // FAB lives as a sibling of the panel. Built and attached unconditionally;
-    // the panel starts minimised so the FAB is the visible affordance on every
-    // page load (state intentionally not persisted across loads).
-    const fab = buildFab();
-    document.body.appendChild(fab);
-    bsnzUi.fabEl = fab;
-    minimisePanel();
-
-    // Render any log entries that accumulated before the panel existed.
-    renderLog();
-
-    log('info', 'Panel initialised.');
-  }
-
-  // GM menu commands — give the user a way back to the panel even if it's
-  // minimised or scrolled off-screen on a long TM page.
-  if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('Open BSNZ panel', () => {
-      if (!bsnzUi.panel) initPanel();
-      if (bsnzUi.minimised) restorePanel();
-      bsnzUi.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-    GM_registerMenuCommand('Open BSNZ settings', () => {
-      if (!bsnzUi.panel) initPanel();
-      openSettings();
-    });
-  }
-
-  // The @run-at directive is document-idle, so DOM is normally ready. Keep
-  // the defensive readyState check in case a TM script blocks parsing.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initPanel, { once: true });
-  } else {
-    initPanel();
   }
 // tprmky/bsnz-pipeline-src/02-tm-scraper.js
 // ===== TM scraper module =====
