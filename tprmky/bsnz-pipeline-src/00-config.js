@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.0
+// @version      0.3.1
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -14,7 +14,7 @@
 // @grant        GM_registerMenuCommand
 // @grant        GM_notification
 // @connect      boardgamegeek.com
-// @connect      *.amazonaws.com
+// @connect      s3.amazonaws.com
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // @require      https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.basic.min.js
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.0';
+  const VERSION = '0.3.1';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
