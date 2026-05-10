@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.2.1
+// @version      0.2.2
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -32,7 +32,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -56,6 +56,7 @@
   const BGG_RETRY_BASE_MS    = 3000;   // for HTTP 202 (BGG queues responses)
   const BGG_MAX_RETRIES      = 5;
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
+  const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
 
   // --- Trade Me category coverage ------------------------------------------
   // Hardcoded list of TM subcategory paths the scraper walks per run. Ported
@@ -677,6 +678,14 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
+        if (added === 0) {
+          log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
+          break;
+        }
+        if (pageNum >= TM_MAX_PAGES_PER_SUBCAT) {
+          log('warn', `${subcat.slug}: hit hard cap of ${TM_MAX_PAGES_PER_SUBCAT} pages — stopping. Investigate whether this subcat genuinely has more listings.`);
+          break;
+        }
         pageUrl = nextUrl;
         pageNum++;
         if (pageUrl) {
