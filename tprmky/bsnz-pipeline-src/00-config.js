@@ -21,9 +21,9 @@
 
 // The pipeline runs inside one shared IIFE so every concatenated module sees
 // the same closure scope (no imports/exports). The opener lives here; the
-// matching `})();` closer lives at the bottom of 06-orchestrator.js (added in
-// Step 7 of the pipeline plan). Do not add a closing `})();` to any earlier
-// file — it would cut the closure short and hide later-file declarations.
+// matching `})();` closer lives in 99-footer.js (which sorts last in the
+// build glob). Do not add a closing `})();` to any earlier file — it would
+// cut the closure short and hide later-file declarations.
 (function () {
   'use strict';
 

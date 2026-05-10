@@ -150,6 +150,22 @@ fields carry over from the previous `data/bsnz.json`.
 pipeline userscript. Fetched by the static site at render time as a single
 file.
 
+### Build-time module convention
+
+Files in `tprmky/bsnz-pipeline-src/` are concatenated by `tprmky/build.sh` in
+lexicographic order to produce `tprmky/bsnz-pipeline.user.js`. The convention
+mirrors `tprmky/tm-bgbf-src/`:
+
+- `00-config.js` opens the IIFE and emits the `// ==UserScript== … // ==/UserScript==`
+  header. It must remain the first file.
+- `99-footer.js` closes the IIFE with `})();`. It must remain the last file.
+- All functional modules sit between (`01-ui.js`, future `02-…` through
+  `06-…`).
+
+The IIFE closer lives in `99-footer.js` so every intermediate build artefact is
+syntactically valid JavaScript. Do not add `})();` to any other file, and do
+not add UserScript header directives outside `00-config.js`.
+
 ### Relationship to existing data files
 
 - `data/listings.json` — produced by `tprmky/tm-bgbf.user.js` (the legacy TM
