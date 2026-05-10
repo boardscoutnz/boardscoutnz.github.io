@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.2.3
+// @version      0.3.0
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.2.3';
+  const VERSION = '0.3.0';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -43,8 +43,9 @@
   const REPO_NAME  = 'boardscoutnz.github.io';
   const DATA_PATH  = 'data/bsnz.json';
   const BRANCH     = 'main';
-  const BGG_BASE   = 'https://boardgamegeek.com/xmlapi2';
-  const GITHUB_API = 'https://api.github.com';
+  const BGG_API_BASE       = 'https://boardgamegeek.com/xmlapi2';
+  const BGG_RANKS_PAGE_URL = 'https://boardgamegeek.com/data_dumps/bg_ranks';
+  const GITHUB_API         = 'https://api.github.com';
 
   // Public URL for the committed data file (used by the "Open data/bsnz.json"
   // button in 01-ui.js). Branch-aware so a dev fork pointing at a non-main
@@ -53,8 +54,8 @@
     `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${BRANCH}/${DATA_PATH}`;
 
   // --- Pacing / retry knobs -------------------------------------------------
-  const TM_REQUEST_DELAY_MS  = 1500;   // between TM page loads
-  const BGG_REQUEST_DELAY_MS = 2000;   // 0.5 req/sec, polite to BGG
+  const TM_REQUEST_DELAY_MS      = 1500;   // between TM page loads
+  const BGG_API_REQUEST_DELAY_MS = 2000;   // 0.5 req/sec, polite to BGG
   const BGG_BATCH_SIZE       = 20;     // IDs per /thing call
   const BGG_RETRY_BASE_MS    = 3000;   // for HTTP 202 (BGG queues responses)
   const BGG_MAX_RETRIES      = 5;
@@ -111,10 +112,18 @@
   // without leaking the PAT itself.
   function loadConfig() {
     return {
-      pat:               GM_getValue('gh_pat',               ''),
-      pat_set_at:        GM_getValue('gh_pat_set_at',        null),
-      auto_commit:       GM_getValue('auto_commit',          false),
-      pacing_multiplier: GM_getValue('pacing_multiplier',    1.0)
+      pat:                          GM_getValue('gh_pat',                          ''),
+      pat_set_at:                   GM_getValue('gh_pat_set_at',                   null),
+      auto_commit:                  GM_getValue('auto_commit',                     false),
+      pacing_multiplier:            GM_getValue('pacing_multiplier',               1.0),
+      // BGG corpus refresh knobs (Step 5). TTL is in days; the force flag is a
+      // one-shot — runCorpusRefreshPhase resets it to false after a forced run.
+      bgg_corpus_cache_ttl_days:    GM_getValue('bgg_corpus_cache_ttl_days',       7),
+      bgg_corpus_force_refresh:     GM_getValue('bgg_corpus_force_refresh',        false),
+      bgg_corpus_max_rank:          GM_getValue('bgg_corpus_max_rank',             5000),
+      // Optional /thing enrichment (Step 7 wires the call site). When false,
+      // 04-bgg-api.js's bggFetchThings is dormant.
+      enable_bgg_api_enrichment:    GM_getValue('enable_bgg_api_enrichment',       false)
     };
   }
 
@@ -353,7 +362,11 @@
     BSNZ.abortController = new AbortController();
     try {
       await runScrapePhase(BSNZ.abortController.signal);
-      log('info', 'Scrape complete; later phases not yet implemented.');
+      setPhase('Refreshing BGG corpus');
+      await runCorpusRefreshPhase(BSNZ.abortController.signal);
+      // Step 6 will insert the matcher here.
+      // Step 7's orchestrator will call bggFetchThings() conditionally and load the previous bsnz.json.
+      log('info', 'Scrape + corpus complete; later phases not yet implemented.');
       setPhase('Done');
     } catch (e) {
       log('error', 'Pipeline failed: ' + e.message);
@@ -961,6 +974,513 @@
     }
   }
 
+// tprmky/bsnz-pipeline-src/03-bgg-corpus.js
+// ===== BGG corpus refresh module =====
+// Inputs:  BGG_RANKS_PAGE_URL (00-config.js), BSNZ.config.bgg_corpus_*.
+// Outputs: BSNZ.bgg_corpus = { games, byId, byNormName, nameEntries,
+//                              tokenToEntryIdx, fetched_at }.
+//          BSNZ.stats.bgg_corpus_size.
+// Side effects: GM_setValue('bgg_corpus', ...) caches the shaped game list.
+//               GM_setValue('override:<normName>', ...) for manual overrides.
+//
+// Runs inside the shared IIFE opened in 00-config.js. fflate comes from a
+// `@require` directive there. The matcher in a later step will mirror the
+// indexes built here against js/05-bgg-cache.js's structure exactly.
+//
+// Port of the standalone tprmky/bgg-ranks-exporter.user.js: zip URL scrape,
+// fflate-unzip, BOM-strip, RFC-4180 tokenise, shape. The exporter writes a
+// JSON file; this module instead caches the shaped list in GM storage and
+// builds the in-memory matching indexes.
+
+  // --- GM_setValue cache helpers --------------------------------------------
+  const BGG_CORPUS_CACHE_KEY = 'bgg_corpus';
+
+  function getCachedCorpus() {
+    return GM_getValue(BGG_CORPUS_CACHE_KEY, null);
+  }
+
+  function setCachedCorpus(record) {
+    GM_setValue(BGG_CORPUS_CACHE_KEY, record);
+  }
+
+  function isCacheFresh(record, ttlDays) {
+    if (!record || !record.fetched_at) return false;
+    const ageMs = Date.now() - new Date(record.fetched_at).getTime();
+    if (!Number.isFinite(ageMs) || ageMs < 0) return false;
+    return ageMs < ttlDays * 86400000;
+  }
+
+  // --- Manual-override cache helpers (consumed by Step 6's matcher UI) ------
+  const OVERRIDE_PREFIX = 'override:';
+
+  function getOverride(normalisedTitle) {
+    return GM_getValue(OVERRIDE_PREFIX + normalisedTitle, undefined);
+  }
+
+  function setOverride(normalisedTitle, bggId) {
+    GM_setValue(OVERRIDE_PREFIX + normalisedTitle, { id: bggId, ts: Date.now() });
+  }
+
+  // --- normaliseTitle -------------------------------------------------------
+  // Writer-side normaliser. The Step 6 matcher MUST call the same function
+  // (same name, same rules) so byNormName lookups are stable. Lowercase,
+  // smart quotes folded to ASCII, every non-alphanumeric char becomes a
+  // single space, then collapse + trim. Kept deliberately simple — the rich
+  // js/06-matching.js normaliser depends on site-side runtime constants
+  // (NOISE_TOKENS, SENTINEL_REPLACEMENTS) that don't exist in the userscript.
+  function normaliseTitle(s) {
+    if (!s) return '';
+    let n = String(s).toLowerCase();
+    // Smart quotes → ASCII equivalents. U+2018/U+2019 → ', U+201C/U+201D → ".
+    n = n.replace(/[‘’]/g, "'");
+    n = n.replace(/[“”]/g, '"');
+    // Anything that isn't [a-z0-9] becomes a single space (this also strips
+    // the apostrophes and quotes we just normalised — intentional, matches
+    // BGG's "don't" → "dont" collapsing).
+    n = n.replace(/[^a-z0-9]+/g, ' ');
+    return n.trim();
+  }
+
+  // --- Step 1: scrape the signed S3 ZIP URL off the data_dumps page ---------
+  // The href is rendered server-side on the authenticated page, so we do this
+  // as the user (BGG session cookies travel with GM_xmlhttpRequest because
+  // boardgamegeek.com is in @connect). The signed URL points at S3 and is
+  // good for ~5 minutes — fetch the buffer immediately after.
+  function fetchSignedZipUrl(signal) {
+    return new Promise((resolve, reject) => {
+      if (signal && signal.aborted) { reject(new Error('aborted')); return; }
+      const req = GM_xmlhttpRequest({
+        method: 'GET',
+        url: BGG_RANKS_PAGE_URL,
+        responseType: 'text',
+        timeout: 30000,
+        onload: (res) => {
+          if (res.status === 401 || res.status === 403) {
+            reject(new Error(
+              'Not signed into BGG. Open https://boardgamegeek.com, sign in, ' +
+              'then retry.'));
+            return;
+          }
+          if (res.status !== 200) {
+            reject(new Error(`HTTP ${res.status} fetching BGG ranks page`));
+            return;
+          }
+          const html = res.responseText || '';
+          // Same regex as tprmky/bgg-ranks-exporter.user.js — case-insensitive,
+          // captures the first href ending in .zip (with optional query string
+          // for the S3 signature).
+          const m = html.match(/href\s*=\s*["']([^"']+\.zip[^"']*)["']/i);
+          if (!m) {
+            reject(new Error(
+              'No .zip link on /data_dumps/bg_ranks — are you signed in to ' +
+              'BGG in this browser?'));
+            return;
+          }
+          let url = m[1].replace(/&amp;/g, '&');
+          if (url.startsWith('//'))      url = 'https:' + url;
+          else if (url.startsWith('/'))  url = 'https://boardgamegeek.com' + url;
+          resolve(url);
+        },
+        onerror:   () => reject(new Error('Network error fetching BGG ranks page')),
+        ontimeout: () => reject(new Error('Timeout fetching BGG ranks page'))
+      });
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          try { req && req.abort && req.abort(); } catch (_) {}
+          reject(new Error('aborted'));
+        }, { once: true });
+      }
+    });
+  }
+
+  // --- Step 2: download the ZIP body as ArrayBuffer -------------------------
+  function fetchZipBuffer(signedUrl, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal && signal.aborted) { reject(new Error('aborted')); return; }
+      const req = GM_xmlhttpRequest({
+        method: 'GET',
+        url: signedUrl,
+        responseType: 'arraybuffer',
+        timeout: 180000,
+        onload: (res) => {
+          if (res.status !== 200) {
+            reject(new Error(`HTTP ${res.status} downloading ZIP from ${signedUrl}`));
+            return;
+          }
+          if (!res.response) {
+            reject(new Error('Empty ZIP response body — Tampermonkey did not return an ArrayBuffer.'));
+            return;
+          }
+          resolve(res.response);
+        },
+        onerror:   () => reject(new Error('Network error downloading BGG ZIP')),
+        ontimeout: () => reject(new Error('Timeout downloading BGG ZIP'))
+      });
+      if (signal) {
+        signal.addEventListener('abort', () => {
+          try { req && req.abort && req.abort(); } catch (_) {}
+          reject(new Error('aborted'));
+        }, { once: true });
+      }
+    });
+  }
+
+  // --- Step 3: validate the buffer is actually a ZIP ------------------------
+  // PKZIP files start with the local-file-header signature 0x504B0304. If we
+  // got HTML back instead (auth lapsed mid-flow, S3 returned an error page,
+  // etc.) include the first 200 bytes as text in the thrown error so the
+  // diagnosis is obvious from the log.
+  function validateZipBuffer(buf) {
+    if (!buf || buf.byteLength < 4) {
+      throw new Error(`Buffer too small to be a ZIP (${buf ? buf.byteLength : 0} bytes).`);
+    }
+    const head = new Uint8Array(buf);
+    if (head[0] !== 0x50 || head[1] !== 0x4B) {
+      const preview = new TextDecoder('utf-8', { fatal: false })
+        .decode(buf.slice(0, Math.min(200, buf.byteLength)));
+      throw new Error(
+        `Buffer is not a ZIP (first bytes 0x${head[0].toString(16)} 0x${head[1].toString(16)}). ` +
+        `First 200 chars: ${JSON.stringify(preview)}`);
+    }
+  }
+
+  // --- Step 4: decompress with fflate ---------------------------------------
+  function decompressZip(buf) {
+    if (typeof fflate === 'undefined') {
+      throw new Error('fflate library not loaded — check the @require URL is reachable.');
+    }
+    return fflate.unzipSync(new Uint8Array(buf));
+  }
+
+  // --- Step 5: extract the single CSV from the unzipped archive -------------
+  function extractCsvText(decompressed) {
+    const names = Object.keys(decompressed);
+    const csvName = names.find((n) => /\.csv$/i.test(n));
+    if (!csvName) {
+      throw new Error(`No .csv inside ZIP. Files found: ${names.join(', ') || '(none)'}`);
+    }
+    let text = new TextDecoder('utf-8', { fatal: false }).decode(decompressed[csvName]);
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+    return text;
+  }
+
+  // --- Step 6: RFC-4180-ish CSV tokeniser -----------------------------------
+  // Same loop as the legacy exporter: doubled-double-quote inside a quoted
+  // field is an escaped ", a bare comma is a field separator, \n is a row
+  // separator, \r is ignored. Returns rows as arrays of strings.
+  function parseCsv(csvText) {
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    for (let i = 0; i < csvText.length; i++) {
+      const ch = csvText[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (csvText[i + 1] === '"') { field += '"'; i++; }
+          else                          inQuotes = false;
+        } else field += ch;
+      } else {
+        if (ch === '"')        inQuotes = true;
+        else if (ch === ',')  { row.push(field); field = ''; }
+        else if (ch === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else if (ch === '\r') { /* skip */ }
+        else                    field += ch;
+      }
+    }
+    if (field !== '' || row.length) { row.push(field); rows.push(row); }
+    return rows;
+  }
+
+  // --- Step 7: shape rows to {id, primaryName, rank, average} ---------------
+  function shapeRows(rows, maxRank) {
+    if (!rows.length) throw new Error('CSV had no rows.');
+    const header = rows[0].map((h) => String(h).trim().toLowerCase());
+    const cols = {
+      id:      header.indexOf('id'),
+      name:    header.indexOf('name'),
+      rank:    header.indexOf('rank'),
+      average: header.indexOf('average')
+    };
+    const missing = Object.entries(cols).filter(([, idx]) => idx < 0).map(([k]) => k);
+    if (missing.length) {
+      throw new Error(
+        `CSV missing required columns: ${missing.join(', ')}. ` +
+        `Found: ${header.join(', ')}`);
+    }
+    const out = [];
+    for (let r = 1; r < rows.length; r++) {
+      const cells = rows[r];
+      if (!cells || cells.length < header.length / 2) continue;
+      const id   = parseInt(cells[cols.id], 10);
+      const rank = parseInt(cells[cols.rank], 10);
+      if (!Number.isFinite(id) || !Number.isFinite(rank)) continue;
+      if (rank <= 0 || rank > maxRank) continue;
+      const avg = parseFloat(cells[cols.average]);
+      out.push({
+        id,
+        primaryName: cells[cols.name],
+        rank,
+        average: Number.isFinite(avg) ? avg : null
+      });
+    }
+    out.sort((a, b) => a.rank - b.rank);
+    return out;
+  }
+
+  // --- Step 8: build the in-memory indexes ---------------------------------
+  // Mirrors js/05-bgg-cache.js so the Step 6 matcher can reuse its tier-1
+  // and tier-2 logic verbatim. byNormName is first-wins on collision (lower
+  // rank rows are processed first because shapeRows sorts ascending). The
+  // token inverted index lets the matcher narrow tier-2 candidates without
+  // scanning the whole corpus.
+  function buildIndexes(games) {
+    const byId = new Map();
+    const byNormName = new Map();
+    const nameEntries = [];
+    for (const g of games) {
+      byId.set(g.id, g);
+      const norm = normaliseTitle(g.primaryName || '');
+      if (!norm) continue;
+      if (!byNormName.has(norm)) byNormName.set(norm, g);
+      const tokens = norm.split(' ').filter(Boolean);
+      if (!tokens.length) continue;
+      nameEntries.push({
+        id: g.id,
+        normName: norm,
+        tokens,
+        rank: (typeof g.rank === 'number' && g.rank > 0)
+          ? g.rank
+          : Number.POSITIVE_INFINITY
+      });
+    }
+    const tokenToEntryIdx = new Map();
+    for (let i = 0; i < nameEntries.length; i++) {
+      for (const t of nameEntries[i].tokens) {
+        let bucket = tokenToEntryIdx.get(t);
+        if (!bucket) { bucket = new Set(); tokenToEntryIdx.set(t, bucket); }
+        bucket.add(i);
+      }
+    }
+    return { byId, byNormName, nameEntries, tokenToEntryIdx };
+  }
+
+  // --- Phase entry point ----------------------------------------------------
+  // Either reuses the GM-cached corpus (when fresh and force-refresh isn't
+  // set) or pulls a fresh ZIP from BGG. Always rebuilds the in-memory
+  // indexes onto BSNZ.bgg_corpus regardless of which path we took, because
+  // they're the structures the matcher consumes and they aren't worth
+  // serialising across runs.
+  async function runCorpusRefreshPhase(signal) {
+    const ttlDays = BSNZ.config.bgg_corpus_cache_ttl_days;
+    const maxRank = BSNZ.config.bgg_corpus_max_rank;
+    const force   = !!BSNZ.config.bgg_corpus_force_refresh;
+    const cached  = getCachedCorpus();
+
+    let record;
+    if (!force && isCacheFresh(cached, ttlDays)) {
+      record = cached;
+      log('info',
+        `Using cached BGG corpus (${record.game_count} games, fetched ${record.fetched_at})`);
+    } else {
+      log('info', force
+        ? 'Forced BGG corpus refresh — fetching fresh ZIP'
+        : 'BGG corpus stale or missing — fetching fresh ZIP');
+      const signedUrl = await fetchSignedZipUrl(signal);
+      log('info', `Resolved signed BGG ZIP URL: ${signedUrl.split('?')[0]}…`);
+      const buf = await fetchZipBuffer(signedUrl, signal);
+      log('info', `Downloaded ${(buf.byteLength / 1024 / 1024).toFixed(2)} MB ZIP`);
+      validateZipBuffer(buf);
+      const decompressed = decompressZip(buf);
+      const csvText      = extractCsvText(decompressed);
+      const rows         = parseCsv(csvText);
+      const games        = shapeRows(rows, maxRank);
+      record = {
+        fetched_at:     new Date().toISOString(),
+        source_zip_url: signedUrl,
+        game_count:     games.length,
+        games
+      };
+      setCachedCorpus(record);
+      if (force) saveConfigKey('bgg_corpus_force_refresh', false);
+      log('info', `Refreshed BGG corpus: ${record.game_count} games (top rank ${maxRank})`);
+    }
+
+    const idx = buildIndexes(record.games);
+    BSNZ.bgg_corpus = {
+      ...idx,
+      games:      record.games,
+      fetched_at: record.fetched_at
+    };
+    BSNZ.stats.bgg_corpus_size = record.games.length;
+    log('info',
+      `Corpus indexed: ${idx.byNormName.size} normalised names, ` +
+      `${idx.tokenToEntryIdx.size} unique tokens`);
+  }
+// tprmky/bsnz-pipeline-src/04-bgg-api.js
+// ===== BGG XML /thing API client =====
+// Inputs:  BGG_API_BASE, BGG_API_REQUEST_DELAY_MS (00-config.js).
+// Outputs: array of {bgg_id, bgg_weight, bgg_min_players, bgg_max_players,
+//                    bgg_playing_time, bgg_min_age, bgg_categories,
+//                    bgg_mechanics} from bggFetchThings(ids, signal).
+//
+// Runs inside the shared IIFE opened in 00-config.js. Dormant after Step 5 —
+// no call site for bggFetchThings exists yet. Step 7's orchestrator wires it
+// in conditionally on BSNZ.config.enable_bgg_api_enrichment.
+
+  // --- Low-level GET with BGG-friendly retry logic --------------------------
+  // BGG's xmlapi2 returns HTTP 202 ("queued") for batches it hasn't processed
+  // yet — the documented protocol is to wait a few seconds and retry. We also
+  // back off on 429 / 5xx, capped so a single batch's total wait is ≤60s.
+  function bggGetXmlWithRetry(url, signal) {
+    return new Promise((resolve, reject) => {
+      let attempt = 0;
+      let totalWaitMs = 0;
+      const MAX_TOTAL_WAIT_MS = 60000;
+      const MAX_QUEUE_ATTEMPTS = 5;
+
+      const sleep = (ms) => new Promise((res, rej) => {
+        if (signal && signal.aborted) { rej(new Error('aborted')); return; }
+        const t = setTimeout(res, ms);
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            clearTimeout(t);
+            rej(new Error('aborted'));
+          }, { once: true });
+        }
+      });
+
+      const attemptOnce = () => {
+        if (signal && signal.aborted) { reject(new Error('aborted')); return; }
+        attempt++;
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          responseType: 'text',
+          timeout: 60000,
+          onload: async (res) => {
+            try {
+              if (res.status === 200) {
+                resolve(res.responseText || '');
+                return;
+              }
+              if (res.status === 202) {
+                if (attempt >= MAX_QUEUE_ATTEMPTS) {
+                  reject(new Error(
+                    `BGG /thing still queued after ${MAX_QUEUE_ATTEMPTS} attempts: ${url}`));
+                  return;
+                }
+                // 2s, 3s, 4s, 5s — cumulative ≤14s before the cap kicks in.
+                const wait = (attempt + 1) * 1000;
+                await sleep(wait);
+                attemptOnce();
+                return;
+              }
+              if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+                const wait = Math.min(2000 * Math.pow(2, attempt - 1), 30000);
+                if (totalWaitMs + wait > MAX_TOTAL_WAIT_MS) {
+                  reject(new Error(
+                    `BGG /thing HTTP ${res.status} repeated; total backoff cap reached`));
+                  return;
+                }
+                totalWaitMs += wait;
+                await sleep(wait);
+                attemptOnce();
+                return;
+              }
+              const body = (res.responseText || '').slice(0, 200);
+              reject(new Error(`BGG /thing HTTP ${res.status}: ${body}`));
+            } catch (e) {
+              reject(e);
+            }
+          },
+          onerror:   () => reject(new Error(`Network error fetching ${url}`)),
+          ontimeout: () => reject(new Error(`Timeout fetching ${url}`))
+        });
+      };
+
+      attemptOnce();
+    });
+  }
+
+  // --- Helpers for picking values out of an <item> element ------------------
+  function _intAttr(parent, sel, attr) {
+    const el = parent.querySelector(sel);
+    if (!el) return null;
+    const v = parseInt(el.getAttribute(attr), 10);
+    return Number.isFinite(v) ? v : null;
+  }
+
+  function _floatAttr(parent, sel, attr) {
+    const el = parent.querySelector(sel);
+    if (!el) return null;
+    const v = parseFloat(el.getAttribute(attr));
+    return Number.isFinite(v) ? v : null;
+  }
+
+  function _linkValues(itemEl, type) {
+    const out = [];
+    const links = itemEl.querySelectorAll(`link[type="${type}"]`);
+    for (const l of links) {
+      const v = l.getAttribute('value');
+      if (v) out.push(v);
+    }
+    return out;
+  }
+
+  // --- Per-item shape -------------------------------------------------------
+  function parseThingItem(el) {
+    const idAttr = parseInt(el.getAttribute('id'), 10);
+    return {
+      bgg_id:           Number.isFinite(idAttr) ? idAttr : null,
+      bgg_weight:       _floatAttr(el, 'statistics > ratings > averageweight', 'value'),
+      bgg_min_players:  _intAttr  (el, 'minplayers',   'value'),
+      bgg_max_players:  _intAttr  (el, 'maxplayers',   'value'),
+      bgg_playing_time: _intAttr  (el, 'playingtime',  'value'),
+      bgg_min_age:      _intAttr  (el, 'minage',       'value'),
+      bgg_categories:   _linkValues(el, 'boardgamecategory'),
+      bgg_mechanics:    _linkValues(el, 'boardgamemechanic')
+    };
+  }
+
+  // --- Public batch entry point ---------------------------------------------
+  // Splits ids into chunks of 20 (BGG's documented soft limit for /thing),
+  // calls bggGetXmlWithRetry per chunk, parses the response with DOMParser,
+  // and concatenates the per-item shapes. Pacing between batches honours
+  // BSNZ.config.pacing_multiplier so a user can throttle if BGG is unhappy.
+  async function bggFetchThings(ids, signal) {
+    const out = [];
+    if (!ids || !ids.length) return out;
+    const BATCH_SIZE = 20;
+    const batches = [];
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      batches.push(ids.slice(i, i + BATCH_SIZE));
+    }
+    const pacing = (BSNZ.config.pacing_multiplier || 1) * BGG_API_REQUEST_DELAY_MS;
+    for (let b = 0; b < batches.length; b++) {
+      if (signal && signal.aborted) throw new Error('aborted');
+      const batch = batches[b];
+      const url = `${BGG_API_BASE}/thing?id=${batch.join(',')}&stats=1`;
+      const xml = await bggGetXmlWithRetry(url, signal);
+      const doc = new DOMParser().parseFromString(xml, 'text/xml');
+      const items = doc.querySelectorAll('items > item');
+      for (const el of items) out.push(parseThingItem(el));
+      if (typeof window.bsnzUpdateProgress === 'function') {
+        window.bsnzUpdateProgress('bgg_api', { done: b + 1, total: batches.length });
+      }
+      if (b < batches.length - 1) {
+        await new Promise((res, rej) => {
+          if (signal && signal.aborted) { rej(new Error('aborted')); return; }
+          const t = setTimeout(res, pacing);
+          if (signal) {
+            signal.addEventListener('abort', () => {
+              clearTimeout(t);
+              rej(new Error('aborted'));
+            }, { once: true });
+          }
+        });
+      }
+    }
+    return out;
+  }
 // 99-footer.js — closes the IIFE opened in 00-config.js.
 // This file MUST sort last in tprmky/bsnz-pipeline-src/.
 })();

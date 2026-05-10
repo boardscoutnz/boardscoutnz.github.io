@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.2.3
+// @version      0.3.0
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.2.3';
+  const VERSION = '0.3.0';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -42,8 +42,9 @@
   const REPO_NAME  = 'boardscoutnz.github.io';
   const DATA_PATH  = 'data/bsnz.json';
   const BRANCH     = 'main';
-  const BGG_BASE   = 'https://boardgamegeek.com/xmlapi2';
-  const GITHUB_API = 'https://api.github.com';
+  const BGG_API_BASE       = 'https://boardgamegeek.com/xmlapi2';
+  const BGG_RANKS_PAGE_URL = 'https://boardgamegeek.com/data_dumps/bg_ranks';
+  const GITHUB_API         = 'https://api.github.com';
 
   // Public URL for the committed data file (used by the "Open data/bsnz.json"
   // button in 01-ui.js). Branch-aware so a dev fork pointing at a non-main
@@ -52,8 +53,8 @@
     `https://github.com/${REPO_OWNER}/${REPO_NAME}/blob/${BRANCH}/${DATA_PATH}`;
 
   // --- Pacing / retry knobs -------------------------------------------------
-  const TM_REQUEST_DELAY_MS  = 1500;   // between TM page loads
-  const BGG_REQUEST_DELAY_MS = 2000;   // 0.5 req/sec, polite to BGG
+  const TM_REQUEST_DELAY_MS      = 1500;   // between TM page loads
+  const BGG_API_REQUEST_DELAY_MS = 2000;   // 0.5 req/sec, polite to BGG
   const BGG_BATCH_SIZE       = 20;     // IDs per /thing call
   const BGG_RETRY_BASE_MS    = 3000;   // for HTTP 202 (BGG queues responses)
   const BGG_MAX_RETRIES      = 5;
@@ -110,10 +111,18 @@
   // without leaking the PAT itself.
   function loadConfig() {
     return {
-      pat:               GM_getValue('gh_pat',               ''),
-      pat_set_at:        GM_getValue('gh_pat_set_at',        null),
-      auto_commit:       GM_getValue('auto_commit',          false),
-      pacing_multiplier: GM_getValue('pacing_multiplier',    1.0)
+      pat:                          GM_getValue('gh_pat',                          ''),
+      pat_set_at:                   GM_getValue('gh_pat_set_at',                   null),
+      auto_commit:                  GM_getValue('auto_commit',                     false),
+      pacing_multiplier:            GM_getValue('pacing_multiplier',               1.0),
+      // BGG corpus refresh knobs (Step 5). TTL is in days; the force flag is a
+      // one-shot — runCorpusRefreshPhase resets it to false after a forced run.
+      bgg_corpus_cache_ttl_days:    GM_getValue('bgg_corpus_cache_ttl_days',       7),
+      bgg_corpus_force_refresh:     GM_getValue('bgg_corpus_force_refresh',        false),
+      bgg_corpus_max_rank:          GM_getValue('bgg_corpus_max_rank',             5000),
+      // Optional /thing enrichment (Step 7 wires the call site). When false,
+      // 04-bgg-api.js's bggFetchThings is dormant.
+      enable_bgg_api_enrichment:    GM_getValue('enable_bgg_api_enrichment',       false)
     };
   }
 
