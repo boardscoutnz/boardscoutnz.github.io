@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.8
+// @version      0.3.9
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.8';
+  const VERSION = '0.3.9';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -62,6 +62,12 @@
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
   const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
   const TM_MAX_RETRIES_PER_PAGE = 3;  // retries per TM page on transient errors (429/502/503/504); after exhaustion, skip the page with a warning rather than abort the run.
+
+  // GM_setValue key + cap for the persistent run-history log (see
+  // 01b-run-history.js). Capped at 50 entries (most-recent-first); generous for
+  // daily use and well within GM_setValue's quota.
+  const RUN_HISTORY_KEY = 'bsnz_run_history';
+  const RUN_HISTORY_MAX_ENTRIES = 50;
 
   // Crawl-speed presets. Terminology + multiplier values mirror tm-bgbf's
   // CRAWL_SPEED_PRESETS (tprmky/tm-bgbf-src/01-constants.js — delayMultiplier
@@ -164,7 +170,12 @@
   }
 
   function clearAllConfig() {
-    GM_listValues().forEach(GM_deleteValue);
+    // Run history is preserved deliberately — clear separately via
+    // 01b-run-history.js's clearRunHistory() (exposed in the Run-history modal).
+    for (const key of GM_listValues()) {
+      if (key === RUN_HISTORY_KEY) continue;
+      GM_deleteValue(key);
+    }
     BSNZ.config = loadConfig();
   }
 
@@ -240,7 +251,7 @@
   function buildPanel() {
     const panel = el('div', {
       position: 'fixed', top: '20px', right: '20px', zIndex: '99999',
-      width: '400px', maxHeight: '80vh', overflow: 'hidden',
+      width: '450px', maxHeight: '80vh', overflow: 'hidden',
       background: '#ffffff', color: '#1a1a1a',
       border: '1px solid #444', borderRadius: '6px',
       boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
@@ -256,6 +267,10 @@
     });
     const title = el('span', { flex: '1', fontWeight: '600' },
       { text: `BSNZ Pipeline v${VERSION}` });
+    const historyBtn = el('button', {
+      background: 'transparent', border: 'none', color: '#fff',
+      cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
+    }, { text: '🕓️', title: 'Run history', on: { click: runHistoryRenderModal } });
     const cogBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
@@ -264,7 +279,7 @@
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
     }, { text: '–', title: 'Minimise', on: { click: minimisePanel } });
-    header.append(title, cogBtn, minBtn);
+    header.append(title, historyBtn, cogBtn, minBtn);
 
     // Body container — everything below the header is hidden when minimised.
     const body = el('div', {
@@ -485,6 +500,7 @@
     BSNZ.run_completed_at = null;
     if (BSNZ._elapsedTimerId) clearInterval(BSNZ._elapsedTimerId);
     BSNZ._elapsedTimerId  = setInterval(updateElapsedDisplay, 1000);
+    runHistoryStart();
 
     BSNZ.stats.tm_scraped = 0;
     renderStats();
@@ -492,6 +508,8 @@
     setProgressIndeterminate(true);
 
     BSNZ.abortController = new AbortController();
+    let runOutcome = 'success';
+    let runErrorMsg = null;
     try {
       await runScrapePhase(BSNZ.abortController.signal);
       setPhase('Refreshing BGG corpus');
@@ -503,6 +521,10 @@
     } catch (e) {
       log('error', 'Pipeline failed: ' + e.message);
       setPhase(e.message === 'aborted' ? 'Cancelled' : 'Error');
+      const aborted = e.name === 'AbortError' || e.message === 'aborted' ||
+        (BSNZ.abortController && BSNZ.abortController.signal && BSNZ.abortController.signal.aborted);
+      runOutcome  = aborted ? 'cancelled' : 'error';
+      runErrorMsg = aborted ? null : (e && e.message);
     } finally {
       BSNZ.run_completed_at = new Date();
       if (BSNZ._elapsedTimerId) {
@@ -516,6 +538,9 @@
       setProgressIndeterminate(false);
       setProgress(0);
       refreshRunBtnEnabled();
+      // Idempotent — runHistoryFinish is a no-op if already called.
+      try { runHistoryFinish(runOutcome, runErrorMsg); }
+      catch (e) { log('error', 'runHistoryFinish failed: ' + (e && e.message)); }
     }
   }
   function onCancelClick() {
@@ -823,14 +848,14 @@
     const clearBtn = el('button', {
       padding: '6px 10px', background: '#c0392b', color: '#fff',
       border: 'none', borderRadius: '4px', cursor: 'pointer'
-    }, { text: 'Clear all data (cache, PAT, settings)', on: { click: () => {
+    }, { text: 'Clear all data (cache, PAT, settings — run history kept)', on: { click: () => {
       if (!clearArmed) {
         clearArmed = true;
-        clearBtn.textContent = 'Click again to confirm — this is irreversible';
+        clearBtn.textContent = 'Click again to confirm — irreversible (Run history is preserved — use \'Clear history\' in the Run history modal to clear that separately.)';
         clearBtn.style.background = '#7d2018';
         setTimeout(() => {
           clearArmed = false;
-          clearBtn.textContent = 'Clear all data (cache, PAT, settings)';
+          clearBtn.textContent = 'Clear all data (cache, PAT, settings — run history kept)';
           clearBtn.style.background = '#c0392b';
         }, 5000);
         return;
@@ -884,6 +909,275 @@
       onerror: (e) => log('error', 'PAT test network error:', e && e.error || 'unknown')
     });
   }
+// tprmky/bsnz-pipeline-src/01b-run-history.js
+// Persistent run history. Each Run-pipeline invocation produces one record
+// (start/end timestamps, duration, crawl speed, outcome, per-phase timings)
+// stored under RUN_HISTORY_KEY via GM_setValue. Survives "Clear all data" —
+// see clearAllConfig() in 00-config.js, which explicitly skips the key. Runs
+// inside the shared IIFE opened in 00-config.js — references VERSION, BSNZ,
+// log, RUN_HISTORY_KEY, RUN_HISTORY_MAX_ENTRIES, crawlSpeedLabelForMultiplier
+// from closure scope. The Run handler in 01-ui.js calls runHistoryStart() /
+// runHistoryFinish(); 02-tm-scraper.js and 03-bgg-corpus.js bracket each
+// phase with runHistoryStartPhase() / runHistoryEndPhase().
+
+  // --- Persistence ----------------------------------------------------------
+  function loadRunHistory() {
+    const raw = GM_getValue(RUN_HISTORY_KEY, null);
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    // Tolerate older string-encoded values just in case.
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+  function saveRunHistory(arr) {
+    const trimmed = (arr || []).slice(0, RUN_HISTORY_MAX_ENTRIES);
+    GM_setValue(RUN_HISTORY_KEY, trimmed);
+  }
+  function clearRunHistory() {
+    GM_setValue(RUN_HISTORY_KEY, []);
+  }
+
+  // --- Current-run accumulator ---------------------------------------------
+  let currentRun = null;
+
+  function runHistoryStart() {
+    const mult = (BSNZ.config && BSNZ.config.pacing_multiplier) || 1.0;
+    currentRun = {
+      id: 'run_' + Date.now(),
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      duration_ms: null,
+      outcome: null,
+      error: null,
+      crawl_speed: crawlSpeedLabelForMultiplier(mult),
+      crawl_speed_multiplier: mult,
+      phases: [],
+      stats: null
+    };
+  }
+
+  function runHistoryStartPhase(name) {
+    if (!currentRun) return;
+    currentRun.phases.push({
+      name,
+      started_at: new Date().toISOString(),
+      completed_at: null,
+      duration_ms: null
+    });
+  }
+
+  function runHistoryEndPhase(name, extraStats) {
+    if (!currentRun) return;
+    // Find the most recent open phase entry with this name (handles repeats).
+    for (let i = currentRun.phases.length - 1; i >= 0; i--) {
+      const p = currentRun.phases[i];
+      if (p.name === name && !p.completed_at) {
+        p.completed_at = new Date().toISOString();
+        p.duration_ms = new Date(p.completed_at) - new Date(p.started_at);
+        if (extraStats && typeof extraStats === 'object') {
+          Object.assign(p, extraStats);
+        }
+        return;
+      }
+    }
+  }
+
+  function runHistoryFinish(outcome, errorMessage) {
+    if (!currentRun) return; // idempotent
+    currentRun.completed_at = new Date().toISOString();
+    currentRun.duration_ms =
+      new Date(currentRun.completed_at) - new Date(currentRun.started_at);
+    currentRun.outcome = outcome || 'success';
+    if (errorMessage) currentRun.error = String(errorMessage);
+    // Snapshot stats so the modal can show e.g. tm_scraped/bgg_searched.
+    try { currentRun.stats = JSON.parse(JSON.stringify(BSNZ.stats || {})); }
+    catch (_) { currentRun.stats = null; }
+
+    const history = loadRunHistory();
+    history.unshift(currentRun);
+    saveRunHistory(history);
+    currentRun = null;
+  }
+
+  // --- Modal renderer -------------------------------------------------------
+  let runHistoryOverlay = null;
+
+  function fmtDuration(ms) {
+    if (ms == null || isNaN(ms) || ms < 0) return '—';
+    const totalSec = Math.floor(ms / 1000);
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+  }
+  function fmtStartedAt(iso) {
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      const pad = (n) => String(n).padStart(2, '0');
+      const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      return { time, date };
+    } catch (_) {
+      return { time: iso, date: '' };
+    }
+  }
+  function outcomeColour(outcome) {
+    if (outcome === 'success')   return '#1e8449';
+    if (outcome === 'error')     return '#c0392b';
+    if (outcome === 'cancelled') return '#7f8c8d';
+    return '#555';
+  }
+
+  function buildPhaseDetails(phases) {
+    const details = el('details', null);
+    const summary = el('summary', { cursor: 'pointer', userSelect: 'none' },
+      { text: `${(phases || []).length} phase${phases && phases.length === 1 ? '' : 's'}` });
+    details.append(summary);
+    if (!phases || phases.length === 0) return details;
+    const list = el('div', { marginTop: '4px', paddingLeft: '8px',
+      borderLeft: '2px solid #444', fontSize: '11px' });
+    for (const p of phases) {
+      const row = el('div', { marginBottom: '4px' });
+      const dur = p.duration_ms != null
+        ? fmtDuration(p.duration_ms)
+        : (p.completed_at ? '—' : '(interrupted)');
+      const head = el('div', { fontWeight: '600' },
+        { text: `${p.name} — ${dur}` });
+      row.append(head);
+      // Surface known extra-stat keys; skip the timestamp/duration scaffolding.
+      const skip = new Set(['name', 'started_at', 'completed_at', 'duration_ms']);
+      const extras = [];
+      for (const k of Object.keys(p)) {
+        if (skip.has(k)) continue;
+        extras.push(`${k}=${JSON.stringify(p[k])}`);
+      }
+      if (extras.length) {
+        row.append(el('div', { color: '#bbb' }, { text: extras.join(', ') }));
+      }
+      list.append(row);
+    }
+    details.append(list);
+    return details;
+  }
+
+  function runHistoryRenderModal() {
+    // Idempotent: re-clicking History while open is a no-op.
+    if (runHistoryOverlay) return runHistoryOverlay;
+
+    const overlay = el('div', {
+      position: 'fixed', top: '0', left: '0', width: '100vw', height: '100vh',
+      background: 'rgba(0,0,0,0.55)', zIndex: '100001',
+      display: 'flex', alignItems: 'center', justifyContent: 'center'
+    });
+    const dialog = el('div', {
+      width: '640px', maxWidth: '90vw', maxHeight: '85vh', overflowY: 'auto',
+      background: '#1f2024', color: '#e6e6e6',
+      border: '1px solid #444', borderRadius: '6px',
+      padding: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+      fontFamily: 'system-ui, sans-serif', fontSize: '13px',
+      display: 'flex', flexDirection: 'column', gap: '10px'
+    });
+
+    function close() {
+      if (!runHistoryOverlay) return;
+      runHistoryOverlay.remove();
+      runHistoryOverlay = null;
+    }
+
+    const titleRow = el('div', { display: 'flex', alignItems: 'center' });
+    titleRow.append(
+      el('span', { flex: '1', fontWeight: '700', fontSize: '15px' },
+        { text: 'Run history' }),
+      el('button', {
+        background: 'transparent', border: 'none', color: '#e6e6e6',
+        cursor: 'pointer', fontSize: '18px', padding: '0 4px'
+      }, { text: '×', title: 'Close', on: { click: close } })
+    );
+    dialog.append(titleRow);
+
+    const history = loadRunHistory();
+    if (history.length === 0) {
+      dialog.append(el('div', { color: '#aaa', padding: '20px 0' },
+        { text: 'No runs recorded yet.' }));
+    } else {
+      const table = el('table', {
+        width: '100%', borderCollapse: 'collapse', fontSize: '12px'
+      });
+      const thead = el('thead', null);
+      const headerTr = el('tr', null);
+      for (const h of ['Started', 'Speed', 'Duration', 'Outcome', 'Phases']) {
+        headerTr.append(el('th', {
+          textAlign: 'left', padding: '6px 8px',
+          borderBottom: '1px solid #444', color: '#bbb', fontWeight: '600'
+        }, { text: h }));
+      }
+      thead.append(headerTr);
+      table.append(thead);
+
+      const tbody = el('tbody', null);
+      for (const run of history) {
+        const tr = el('tr', { borderBottom: '1px solid #2c2d31' });
+        const started = fmtStartedAt(run.started_at);
+        const startedCell = el('td', { padding: '6px 8px', verticalAlign: 'top' });
+        startedCell.append(
+          el('div', { fontFamily: 'ui-monospace, monospace' }, { text: started.time || '—' }),
+          el('div', { fontSize: '10px', color: '#888' }, { text: started.date || '' })
+        );
+        const speedCell = el('td', { padding: '6px 8px', verticalAlign: 'top' },
+          { text: run.crawl_speed || '—' });
+        const durCell = el('td', {
+          padding: '6px 8px', verticalAlign: 'top',
+          fontFamily: 'ui-monospace, monospace'
+        }, { text: fmtDuration(run.duration_ms) });
+        const outcomeCell = el('td', {
+          padding: '6px 8px', verticalAlign: 'top',
+          color: outcomeColour(run.outcome), fontWeight: '600'
+        }, { text: run.outcome || '—' });
+        if (run.error) outcomeCell.title = run.error;
+        const phasesCell = el('td', { padding: '6px 8px', verticalAlign: 'top' });
+        phasesCell.append(buildPhaseDetails(run.phases));
+
+        tr.append(startedCell, speedCell, durCell, outcomeCell, phasesCell);
+        tbody.append(tr);
+      }
+      table.append(tbody);
+      dialog.append(table);
+    }
+
+    const footer = el('div', {
+      display: 'flex', justifyContent: 'flex-end', gap: '8px',
+      borderTop: '1px solid #444', paddingTop: '10px', marginTop: '4px'
+    });
+    const clearBtn = el('button', {
+      padding: '6px 10px', background: '#c0392b', color: '#fff',
+      border: 'none', borderRadius: '4px', cursor: 'pointer'
+    }, { text: 'Clear history', on: { click: () => {
+      if (!confirm('Clear all run history? This cannot be undone.')) return;
+      clearRunHistory();
+      log('warn', 'Run history cleared.');
+      // Re-render in place: close + reopen.
+      close();
+      runHistoryRenderModal();
+    } } });
+    const closeBtn = el('button', {
+      padding: '6px 10px', background: '#444', color: '#fff',
+      border: 'none', borderRadius: '4px', cursor: 'pointer'
+    }, { text: 'Close', on: { click: close } });
+    footer.append(clearBtn, closeBtn);
+    dialog.append(footer);
+
+    overlay.append(dialog);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.body.appendChild(overlay);
+    runHistoryOverlay = overlay;
+    return overlay;
+  }
 // tprmky/bsnz-pipeline-src/02-tm-scraper.js
 // ===== TM scraper module =====
 // Inputs:  TM_SUBCATS (from 00-config.js) — 8 hardcoded subcategory paths.
@@ -903,6 +1197,7 @@
 
   async function runScrapePhase(signal) {
     log('info', 'TM scrape phase starting');
+    runHistoryStartPhase('tm_scrape');
     BSNZ.tm_listings = [];
     BSNZ.stats.tm_scraped = 0;
     // Dedupe lives outside the subcat loop: first-subcat-wins, so a listing
@@ -958,7 +1253,7 @@
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
         const pageLevel = listings.length === 0 ? 'warn' : 'info';
-        log(pageLevel, `Page ${pageNum} = ${listings.length} listings [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
+        log(pageLevel, `#${pageNum} = ${listings.length} items [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
           consoleMsg: `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`
         });
         if (added === 0) {
@@ -982,6 +1277,10 @@
         await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
       }
     }
+    runHistoryEndPhase('tm_scrape', {
+      listings_scraped: BSNZ.tm_listings.length,
+      subcat_count: TM_SUBCATS.length
+    });
     log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`);
   }
 
@@ -1600,6 +1899,10 @@
     const maxRank = BSNZ.config.bgg_corpus_max_rank;
     const force   = !!BSNZ.config.bgg_corpus_force_refresh;
     const cached  = getCachedCorpus();
+    // Capture before any state mutation so the run-history record reflects
+    // the actual decision (cache vs network).
+    const wasCacheHit = !force && isCacheFresh(cached, ttlDays);
+    runHistoryStartPhase('bgg_corpus_refresh');
 
     let record;
     if (!force && isCacheFresh(cached, ttlDays)) {
@@ -1640,6 +1943,10 @@
     log('info',
       `Corpus indexed: ${idx.byNormName.size} normalised names, ` +
       `${idx.tokenToEntryIdx.size} unique tokens`);
+    runHistoryEndPhase('bgg_corpus_refresh', {
+      games_count: record.games.length,
+      cache_hit: wasCacheHit
+    });
   }
 // tprmky/bsnz-pipeline-src/04-bgg-api.js
 // ===== BGG XML /thing API client =====

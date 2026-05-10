@@ -133,14 +133,14 @@
     const clearBtn = el('button', {
       padding: '6px 10px', background: '#c0392b', color: '#fff',
       border: 'none', borderRadius: '4px', cursor: 'pointer'
-    }, { text: 'Clear all data (cache, PAT, settings)', on: { click: () => {
+    }, { text: 'Clear all data (cache, PAT, settings — run history kept)', on: { click: () => {
       if (!clearArmed) {
         clearArmed = true;
-        clearBtn.textContent = 'Click again to confirm — this is irreversible';
+        clearBtn.textContent = 'Click again to confirm — irreversible (Run history is preserved — use \'Clear history\' in the Run history modal to clear that separately.)';
         clearBtn.style.background = '#7d2018';
         setTimeout(() => {
           clearArmed = false;
-          clearBtn.textContent = 'Clear all data (cache, PAT, settings)';
+          clearBtn.textContent = 'Clear all data (cache, PAT, settings — run history kept)';
           clearBtn.style.background = '#c0392b';
         }, 5000);
         return;

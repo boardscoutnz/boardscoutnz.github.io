@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.8
+// @version      0.3.9
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.8';
+  const VERSION = '0.3.9';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -61,6 +61,12 @@
   const FUZZY_MATCH_THRESHOLD = 0.4;   // Fuse.js score; lower = stricter
   const TM_MAX_PAGES_PER_SUBCAT = 100;  // hard cap; defence against runaway pagination if TM serves content past the actual end. Real subcats are well under 30 pages.
   const TM_MAX_RETRIES_PER_PAGE = 3;  // retries per TM page on transient errors (429/502/503/504); after exhaustion, skip the page with a warning rather than abort the run.
+
+  // GM_setValue key + cap for the persistent run-history log (see
+  // 01b-run-history.js). Capped at 50 entries (most-recent-first); generous for
+  // daily use and well within GM_setValue's quota.
+  const RUN_HISTORY_KEY = 'bsnz_run_history';
+  const RUN_HISTORY_MAX_ENTRIES = 50;
 
   // Crawl-speed presets. Terminology + multiplier values mirror tm-bgbf's
   // CRAWL_SPEED_PRESETS (tprmky/tm-bgbf-src/01-constants.js — delayMultiplier
@@ -163,7 +169,12 @@
   }
 
   function clearAllConfig() {
-    GM_listValues().forEach(GM_deleteValue);
+    // Run history is preserved deliberately — clear separately via
+    // 01b-run-history.js's clearRunHistory() (exposed in the Run-history modal).
+    for (const key of GM_listValues()) {
+      if (key === RUN_HISTORY_KEY) continue;
+      GM_deleteValue(key);
+    }
     BSNZ.config = loadConfig();
   }
 

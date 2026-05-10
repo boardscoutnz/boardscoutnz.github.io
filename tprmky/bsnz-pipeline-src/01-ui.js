@@ -35,7 +35,7 @@
   function buildPanel() {
     const panel = el('div', {
       position: 'fixed', top: '20px', right: '20px', zIndex: '99999',
-      width: '400px', maxHeight: '80vh', overflow: 'hidden',
+      width: '450px', maxHeight: '80vh', overflow: 'hidden',
       background: '#ffffff', color: '#1a1a1a',
       border: '1px solid #444', borderRadius: '6px',
       boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
@@ -51,6 +51,10 @@
     });
     const title = el('span', { flex: '1', fontWeight: '600' },
       { text: `BSNZ Pipeline v${VERSION}` });
+    const historyBtn = el('button', {
+      background: 'transparent', border: 'none', color: '#fff',
+      cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
+    }, { text: '🕓️', title: 'Run history', on: { click: runHistoryRenderModal } });
     const cogBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
@@ -59,7 +63,7 @@
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
     }, { text: '–', title: 'Minimise', on: { click: minimisePanel } });
-    header.append(title, cogBtn, minBtn);
+    header.append(title, historyBtn, cogBtn, minBtn);
 
     // Body container — everything below the header is hidden when minimised.
     const body = el('div', {
@@ -280,6 +284,7 @@
     BSNZ.run_completed_at = null;
     if (BSNZ._elapsedTimerId) clearInterval(BSNZ._elapsedTimerId);
     BSNZ._elapsedTimerId  = setInterval(updateElapsedDisplay, 1000);
+    runHistoryStart();
 
     BSNZ.stats.tm_scraped = 0;
     renderStats();
@@ -287,6 +292,8 @@
     setProgressIndeterminate(true);
 
     BSNZ.abortController = new AbortController();
+    let runOutcome = 'success';
+    let runErrorMsg = null;
     try {
       await runScrapePhase(BSNZ.abortController.signal);
       setPhase('Refreshing BGG corpus');
@@ -298,6 +305,10 @@
     } catch (e) {
       log('error', 'Pipeline failed: ' + e.message);
       setPhase(e.message === 'aborted' ? 'Cancelled' : 'Error');
+      const aborted = e.name === 'AbortError' || e.message === 'aborted' ||
+        (BSNZ.abortController && BSNZ.abortController.signal && BSNZ.abortController.signal.aborted);
+      runOutcome  = aborted ? 'cancelled' : 'error';
+      runErrorMsg = aborted ? null : (e && e.message);
     } finally {
       BSNZ.run_completed_at = new Date();
       if (BSNZ._elapsedTimerId) {
@@ -311,6 +322,9 @@
       setProgressIndeterminate(false);
       setProgress(0);
       refreshRunBtnEnabled();
+      // Idempotent — runHistoryFinish is a no-op if already called.
+      try { runHistoryFinish(runOutcome, runErrorMsg); }
+      catch (e) { log('error', 'runHistoryFinish failed: ' + (e && e.message)); }
     }
   }
   function onCancelClick() {

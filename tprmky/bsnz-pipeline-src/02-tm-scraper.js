@@ -17,6 +17,7 @@
 
   async function runScrapePhase(signal) {
     log('info', 'TM scrape phase starting');
+    runHistoryStartPhase('tm_scrape');
     BSNZ.tm_listings = [];
     BSNZ.stats.tm_scraped = 0;
     // Dedupe lives outside the subcat loop: first-subcat-wins, so a listing
@@ -72,7 +73,7 @@
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
         const pageLevel = listings.length === 0 ? 'warn' : 'info';
-        log(pageLevel, `Page ${pageNum} = ${listings.length} listings [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
+        log(pageLevel, `#${pageNum} = ${listings.length} items [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
           consoleMsg: `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`
         });
         if (added === 0) {
@@ -96,6 +97,10 @@
         await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
       }
     }
+    runHistoryEndPhase('tm_scrape', {
+      listings_scraped: BSNZ.tm_listings.length,
+      subcat_count: TM_SUBCATS.length
+    });
     log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`);
   }
 
