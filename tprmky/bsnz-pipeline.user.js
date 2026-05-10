@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.2
+// @version      0.3.3
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.2';
+  const VERSION = '0.3.3';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -718,6 +718,7 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
+        log('info', `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`);
         if (added === 0) {
           log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
           break;

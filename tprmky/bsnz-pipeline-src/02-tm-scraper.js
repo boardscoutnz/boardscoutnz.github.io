@@ -66,6 +66,7 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
+        log('info', `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`);
         if (added === 0) {
           log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
           break;
