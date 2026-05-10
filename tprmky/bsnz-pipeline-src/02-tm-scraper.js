@@ -28,13 +28,14 @@
       const subcat = TM_SUBCATS[i];
       let pageUrl = TM_ORIGIN + subcat.path;
       let pageNum = 1;
-      const pageStart = pageNum;
+      const subcatBaseUrl = pageUrl;
+      const displayPath = subcatBaseUrl.replace(TM_DISPLAY_PREFIX_STRIP, '') || subcatBaseUrl;
+      log('info', `Fetching ${subcat.slug}:`, {
+        consoleMsg: `Fetching ${subcat.slug} subcategory at ${subcatBaseUrl}`,
+        link: { text: displayPath, href: subcatBaseUrl }
+      });
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
-        const pageRange = pageNum === pageStart ? `${pageNum}` : `${pageStart} - ${pageNum}`;
-        log('info', `Fetching ${subcat.slug} page ${pageRange}: ${pageUrl}`, {
-          mergeKey: `tm-fetch:${subcat.slug}`
-        });
         let html;
         try {
           html = await fetchTMPageHtml(pageUrl, signal);
@@ -70,7 +71,10 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
-        log('info', `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`);
+        const pageLevel = listings.length === 0 ? 'warn' : 'info';
+        log(pageLevel, `Page ${pageNum} = ${listings.length} listings [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
+          consoleMsg: `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`
+        });
         if (added === 0) {
           log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
           break;

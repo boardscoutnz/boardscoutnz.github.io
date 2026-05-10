@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.3.6
+// @version      0.3.7
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.3.6';
+  const VERSION = '0.3.7';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -98,6 +98,9 @@
   // emitted by 02-tm-scraper.js is tagged with the slug of the first subcat
   // it was found in (dedupe is first-subcat-wins across the 8 paths).
   const TM_ORIGIN = 'https://www.trademe.co.nz';
+  // Stripped from the front of subcat URLs when rendered in the log link text,
+  // so the visible label is the leaf path rather than the full origin tree.
+  const TM_DISPLAY_PREFIX_STRIP = 'https://www.trademe.co.nz/a/marketplace/toys-models';
   const TM_SUBCATS = [
     { slug: 'card-games',          name: 'Card games',
       path: '/a/marketplace/toys-models/games-puzzles-tricks/card-games' },
@@ -170,36 +173,27 @@
   // `window.bsnzOnLogEntry` to subscribe; if it's not set yet (early boot)
   // we just append to BSNZ.log and the UI will render when it initialises.
   //
-  // opts.mergeKey: if the immediately preceding entry has the same mergeKey,
-  // mutate that entry's ts/msg/level in place rather than appending. Lets
-  // callers collapse a chatty rolling status (e.g. "fetching page 1", "page 2",
-  // …) into a single line that updates as it progresses. Any intervening log
-  // call (different mergeKey, or unkeyed) breaks the chain so the next keyed
-  // call starts a fresh entry.
+  // opts.consoleMsg: alternative message for the browser console only. The
+  // panel-rendered text always uses msg; consoleMsg lets a caller keep verbose
+  // detail in DevTools while showing a streamlined line in the panel.
+  // opts.link: optional structured { text, href } rendered as an <a> after
+  // msg in the panel. Structured (not markdown) so the renderer can HTML-escape
+  // both fields and prevent XSS from arbitrary message content.
   const LOG_CAP = 500;
   function log(level, msg, opts) {
-    const mergeKey = opts && opts.mergeKey;
-    const last = BSNZ.log[BSNZ.log.length - 1];
-    let entry;
-    if (mergeKey && last && last.mergeKey === mergeKey) {
-      last.ts    = new Date().toISOString();
-      last.msg   = String(msg);
-      last.level = level;
-      entry = last;
-    } else {
-      entry = {
-        ts:       new Date().toISOString(),
-        level,
-        msg:      String(msg),
-        mergeKey: mergeKey
-      };
-      BSNZ.log.push(entry);
-      while (BSNZ.log.length > LOG_CAP) BSNZ.log.shift();
-    }
+    const entry = {
+      ts:    new Date().toISOString(),
+      level,
+      msg:   String(msg),
+      link:  (opts && opts.link) || null
+    };
+    BSNZ.log.push(entry);
+    while (BSNZ.log.length > LOG_CAP) BSNZ.log.shift();
     const consoleFn = level === 'error' ? 'error'
                     : level === 'warn'  ? 'warn'
                     : 'log';
-    console[consoleFn](`[bsnz:${level}]`, msg);
+    const consoleText = (opts && opts.consoleMsg) || msg;
+    console[consoleFn](`[bsnz:${level}]`, consoleText);
     if (typeof window.bsnzOnLogEntry === 'function') {
       try { window.bsnzOnLogEntry(entry); } catch (_) { /* ignore UI errors */ }
     }
@@ -265,7 +259,7 @@
     const cogBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
-    }, { text: '⚙', title: 'Settings', on: { click: openSettings } });
+    }, { text: '⚙️', title: 'Settings', on: { click: openSettings } });
     const minBtn = el('button', {
       background: 'transparent', border: 'none', color: '#fff',
       cursor: 'pointer', fontSize: '15px', padding: '2px 6px'
@@ -298,7 +292,7 @@
 
     // Stats grid
     bsnzUi.statsEl = el('div', {
-      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px',
+      display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0px 10px',
       fontSize: '12px', color: '#333'
     });
     renderStats();
@@ -347,6 +341,19 @@
     return panel;
   }
 
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function formatStartedAt(d) {
+    if (!d) return '—';
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  }
+  function formatElapsed() {
+    if (!BSNZ.run_started_at) return '—';
+    const end = BSNZ.run_completed_at || new Date();
+    const totalSec = Math.max(0, Math.floor((end - BSNZ.run_started_at) / 1000));
+    const mm = Math.floor(totalSec / 60);
+    const ss = totalSec % 60;
+    return `${mm}:${pad2(ss)}`;
+  }
   function renderStats() {
     const s = BSNZ.stats;
     const rows = [
@@ -354,15 +361,26 @@
       ['BGG searched',   s.bgg_searched],
       ['BGG fetched',    s.bgg_fetched],
       ['Fuzzy matched',  s.fuzzy_matched],
-      ['Committed',      s.github_committed ? 'yes' : 'no']
+      ['Committed',      s.github_committed ? 'yes' : 'no'],
+      ['Started at',     formatStartedAt(BSNZ.run_started_at)],
+      ['Elapsed',        formatElapsed()]
     ];
     bsnzUi.statsEl.replaceChildren();
+    bsnzUi._elapsedValueEl = null;
     for (const [k, v] of rows) {
+      const valueEl = el('span',
+        { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
+        { text: String(v) });
+      if (k === 'Elapsed') bsnzUi._elapsedValueEl = valueEl;
       bsnzUi.statsEl.append(
         el('span', { color: '#666' }, { text: k }),
-        el('span', { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
-           { text: String(v) })
+        valueEl
       );
+    }
+  }
+  function updateElapsedDisplay() {
+    if (bsnzUi._elapsedValueEl) {
+      bsnzUi._elapsedValueEl.textContent = formatElapsed();
     }
   }
 
@@ -463,6 +481,11 @@
     bsnzUi.cancelBtn.style.display = 'inline-block';
     setFabRunning(true);
 
+    BSNZ.run_started_at   = new Date();
+    BSNZ.run_completed_at = null;
+    if (BSNZ._elapsedTimerId) clearInterval(BSNZ._elapsedTimerId);
+    BSNZ._elapsedTimerId  = setInterval(updateElapsedDisplay, 1000);
+
     BSNZ.stats.tm_scraped = 0;
     renderStats();
     setPhase('Scraping TM');
@@ -481,6 +504,12 @@
       log('error', 'Pipeline failed: ' + e.message);
       setPhase(e.message === 'aborted' ? 'Cancelled' : 'Error');
     } finally {
+      BSNZ.run_completed_at = new Date();
+      if (BSNZ._elapsedTimerId) {
+        clearInterval(BSNZ._elapsedTimerId);
+        BSNZ._elapsedTimerId = null;
+      }
+      updateElapsedDisplay();
       BSNZ.abortController = null;
       bsnzUi.cancelBtn.style.display = 'none';
       setFabRunning(false);
@@ -575,6 +604,14 @@
   // so this is cheap. Auto-scrolls to the newest entry unless the user has
   // scrolled up to inspect older lines (within ~20px of bottom counts as
   // "still following the tail"); preserves their scroll position otherwise.
+  function htmlEscape(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
   function renderLog() {
     if (!bsnzUi.logEl) return;
     const entries = BSNZ.log || [];
@@ -587,9 +624,19 @@
                    : entry.level === 'warn'  ? '#b7791f'
                    : entry.level === 'debug' ? '#666'
                    : '#1a1a1a';
-      elBox.append(el('div', { color: colour, marginBottom: '2px' }, {
-        text: `${entry.ts.slice(11, 19)} [${entry.level}] ${entry.msg}`
-      }));
+      const prefix = `${entry.ts.slice(11, 19)} [${entry.level}] `;
+      const escapedMsg = htmlEscape(entry.msg);
+      let html = htmlEscape(prefix) + escapedMsg;
+      if (entry.link && entry.link.href && entry.link.text) {
+        const escapedHref = htmlEscape(entry.link.href);
+        const escapedText = htmlEscape(entry.link.text);
+        html += ' ' + '<a href="' + escapedHref +
+                '" target="_blank" rel="noreferrer">' +
+                escapedText + '</a>';
+      }
+      elBox.append(el('div', {
+        color: colour, marginBottom: '2px', lineHeight: '12px'
+      }, { html }));
     }
     if (wasNearBottom) elBox.scrollTop = elBox.scrollHeight;
   }
@@ -861,13 +908,14 @@
       const subcat = TM_SUBCATS[i];
       let pageUrl = TM_ORIGIN + subcat.path;
       let pageNum = 1;
-      const pageStart = pageNum;
+      const subcatBaseUrl = pageUrl;
+      const displayPath = subcatBaseUrl.replace(TM_DISPLAY_PREFIX_STRIP, '') || subcatBaseUrl;
+      log('info', `Fetching ${subcat.slug}:`, {
+        consoleMsg: `Fetching ${subcat.slug} subcategory at ${subcatBaseUrl}`,
+        link: { text: displayPath, href: subcatBaseUrl }
+      });
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
-        const pageRange = pageNum === pageStart ? `${pageNum}` : `${pageStart} - ${pageNum}`;
-        log('info', `Fetching ${subcat.slug} page ${pageRange}: ${pageUrl}`, {
-          mergeKey: `tm-fetch:${subcat.slug}`
-        });
         let html;
         try {
           html = await fetchTMPageHtml(pageUrl, signal);
@@ -903,7 +951,10 @@
         }
         BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
         tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
-        log('info', `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`);
+        const pageLevel = listings.length === 0 ? 'warn' : 'info';
+        log(pageLevel, `Page ${pageNum} = ${listings.length} listings [New = ${added}, Total = ${BSNZ.tm_listings.length}]`, {
+          consoleMsg: `${subcat.slug} page ${pageNum}: ${listings.length} listings on page, ${added} new, running total ${BSNZ.tm_listings.length}.`
+        });
         if (added === 0) {
           log('info', `${subcat.slug}: no new listings on page ${pageNum} (TM page-end overshoot) — moving to next subcat after ${pageNum} page(s).`);
           break;
