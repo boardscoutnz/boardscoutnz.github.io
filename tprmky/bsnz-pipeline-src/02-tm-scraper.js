@@ -1,46 +1,62 @@
 // tprmky/bsnz-pipeline-src/02-tm-scraper.js
 // ===== TM scraper module =====
-// Inputs:  BSNZ.config.tm_category_url
-// Outputs: BSNZ.tm_listings = [ {tm_id, tm_url, tm_title, ...}, ... ]
+// Inputs:  TM_SUBCATS (from 00-config.js) — 8 hardcoded subcategory paths.
+// Outputs: BSNZ.tm_listings = [ {tm_id, tm_url, tm_title, ..., tm_subcat}, ... ]
 // Side effects: updates BSNZ.stats.tm_scraped, calls log() and updateProgress().
 //
 // Runs inside the shared IIFE opened in 00-config.js — so TM_REQUEST_DELAY_MS,
-// BSNZ, log, etc. resolve from closure scope.
+// TM_ORIGIN, TM_SUBCATS, BSNZ, log, etc. resolve from closure scope.
 //
 // Extraction strategy. The legacy TM scraper (tprmky/tm-bgbf-src/) showed
 // that TM's search-result pages are Next.js-rendered: the listing array is
 // embedded as JSON inside <script id="__NEXT_DATA__">, with a DOM card
 // fallback when that script is absent. We re-use that two-tier approach
 // here, but emit the bsnz.json record shape (tm_id / tm_url / tm_title /
-// tm_price_nzd / tm_buy_now_nzd / tm_condition / tm_location) — see
-// docs/13-pipeline-pre-merged-data.md.
-
-  const TM_ORIGIN = 'https://www.trademe.co.nz';
+// tm_price_nzd / tm_buy_now_nzd / tm_condition / tm_location / tm_subcat) —
+// see docs/13-pipeline-pre-merged-data.md.
 
   async function runScrapePhase(signal) {
     log('info', 'TM scrape phase starting');
     BSNZ.tm_listings = [];
     BSNZ.stats.tm_scraped = 0;
-    const startUrl = BSNZ.config.tm_category_url;
-    if (!startUrl) throw new Error('tm_category_url not configured');
+    // Dedupe lives outside the subcat loop: first-subcat-wins, so a listing
+    // that appears in both card-games and games-puzzles-other (TM lets sellers
+    // cross-list) is tagged with the slug it was first seen in.
+    const seen = new Set();
 
-    let pageUrl = startUrl;
-    let pageNum = 1;
-    while (pageUrl) {
-      if (signal.aborted) throw new Error('aborted');
-      log('info', `Fetching TM page ${pageNum}: ${pageUrl}`);
-      const html = await fetchTMPageHtml(pageUrl, signal);
-      const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
-      BSNZ.tm_listings.push(...listings);
-      BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
-      tmUpdateProgress('scrape', pageNum, listings.length);
-      pageUrl = nextUrl;
-      pageNum++;
-      if (pageUrl) {
+    for (let i = 0; i < TM_SUBCATS.length; i++) {
+      const subcat = TM_SUBCATS[i];
+      let pageUrl = TM_ORIGIN + subcat.path;
+      let pageNum = 1;
+      while (pageUrl) {
+        if (signal.aborted) throw new Error('aborted');
+        log('info', `Fetching ${subcat.slug} page ${pageNum}: ${pageUrl}`);
+        const html = await fetchTMPageHtml(pageUrl, signal);
+        const { listings, nextUrl } = parseTMListingsPage(html, pageUrl);
+        let added = 0;
+        for (const listing of listings) {
+          if (seen.has(listing.tm_id)) continue;
+          seen.add(listing.tm_id);
+          listing.tm_subcat = subcat.slug;
+          BSNZ.tm_listings.push(listing);
+          added++;
+        }
+        BSNZ.stats.tm_scraped = BSNZ.tm_listings.length;
+        tmUpdateProgress('scrape', { subcat: subcat.slug, pageNum, addedCount: added });
+        pageUrl = nextUrl;
+        pageNum++;
+        if (pageUrl) {
+          await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
+        }
+      }
+      // Pace between subcats too — back-to-back hits on the same TM origin
+      // would defeat the polite-rate guard. Skip the trailing sleep after the
+      // last subcat so the phase ends promptly.
+      if (i < TM_SUBCATS.length - 1) {
         await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
       }
     }
-    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings`);
+    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`);
   }
 
   // GM_xmlhttpRequest doesn't accept an AbortSignal natively; it returns a
@@ -290,11 +306,10 @@
     });
   }
 
-  function tmUpdateProgress(phase, pageNum, addedCount) {
+  function tmUpdateProgress(phase, info) {
     if (typeof window.bsnzUpdateProgress === 'function') {
       window.bsnzUpdateProgress(phase, {
-        pageNum,
-        addedCount,
+        ...info,
         total: BSNZ.stats.tm_scraped
       });
     }
