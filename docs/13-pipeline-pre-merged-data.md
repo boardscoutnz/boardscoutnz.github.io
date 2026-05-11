@@ -160,6 +160,15 @@ The optional BGG XML `/thing` API enrichment runs only when the user has the
 "Enable BGG API enrichment" setting checked. When unchecked, the conditional
 fields carry over from the previous `data/bsnz.json`.
 
+A "Test scrape (3 subcats only)" checkbox in the settings dialog (added in
+v0.5.1) restricts the TM scraper to a fixed subset — `childrens-games`,
+`dice-games`, `word-games` — instead of all 8 TM_SUBCATS. The checkbox is
+a development/iteration aid: it shortens a full pipeline round-trip
+dramatically while changes are being tested, and persists across reloads
+via `GM_setValue`. The active slug list is also surfaced as a tooltip on
+the checkbox label, and an info-level log line confirms the active set on
+each run start.
+
 ### File location
 
 `data/bsnz.json` — committed to the repo via the GitHub Contents API by the

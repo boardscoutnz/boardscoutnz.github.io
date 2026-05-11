@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.5.0
+// @version      0.5.1
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.5.0';
+  const VERSION = '0.5.1';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -126,6 +126,14 @@
       path: '/a/marketplace/toys-models/games-puzzles-tricks/other' }
   ];
 
+  // Deliberate dev/iteration aid. When `test_scrape_mode` is on, the TM
+  // scraper restricts itself to this fixed subset of TM_SUBCATS slugs so a
+  // round-trip through the pipeline finishes in a fraction of the time.
+  // Keep these slugs in sync with the TM_SUBCATS array above — if a slug is
+  // renamed there, update it here too or the filter will silently match
+  // nothing for that entry.
+  const TM_TEST_SUBCAT_SLUGS = ['childrens-games', 'dice-games', 'word-games'];
+
   // --- Global state holder --------------------------------------------------
   // One mutable object that every later module reads and writes. Kept as a
   // single named root so the console-poke surface is `BSNZ.…`.
@@ -160,7 +168,10 @@
       bgg_corpus_max_rank:          GM_getValue('bgg_corpus_max_rank',             5000),
       // Optional /thing enrichment (Step 7 wires the call site). When false,
       // 04-bgg-api.js's bggFetchThings is dormant.
-      enable_bgg_api_enrichment:    GM_getValue('enable_bgg_api_enrichment',       false)
+      enable_bgg_api_enrichment:    GM_getValue('enable_bgg_api_enrichment',       false),
+      // Dev/iteration aid. When true, runScrapePhase walks only the slugs in
+      // TM_TEST_SUBCAT_SLUGS rather than the full TM_SUBCATS list.
+      test_scrape_mode:             GM_getValue('test_scrape_mode',                false)
     };
   }
 
@@ -903,6 +914,27 @@
       text: '(see docs/13-pipeline-pre-merged-data.md)'
     });
 
+    // Test-scrape mode (dev iteration aid). Limits runScrapePhase to the 3
+    // slugs in TM_TEST_SUBCAT_SLUGS (00-config.js). Placed in the settings
+    // dialog rather than the main panel because 01-ui.js is already over the
+    // ~500-line cap. Tooltip lists the active slugs so a hover surfaces them.
+    const testRow = el('label', {
+      display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
+    }, { title: TM_TEST_SUBCAT_SLUGS.join(', ') });
+    const testCb = el('input', {}, {
+      type: 'checkbox', checked: !!cfg.test_scrape_mode,
+      on: { change: () => {
+        saveConfigKey('test_scrape_mode', testCb.checked);
+        if (testCb.checked) {
+          log('info', `Test-scrape mode enabled — next run will only scrape ${TM_TEST_SUBCAT_SLUGS.join(' / ')}.`);
+        } else {
+          log('info', `Test-scrape mode disabled — next run will scrape all ${TM_SUBCATS.length} subcats.`);
+        }
+      }}
+    });
+    testRow.append(testCb,
+      el('span', null, { text: 'Test scrape (3 subcats only)' }));
+
     // Auto-commit
     const autoRow = el('label', {
       display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
@@ -985,6 +1017,7 @@
       titleRow,
       patLabel, patStatus, patInput, patBtnRow,
       tmInfo, tmInfoHint,
+      testRow,
       autoRow,
       crawlLabel, crawlSeg,
       clearWrap
@@ -1311,6 +1344,14 @@
 
   async function runScrapePhase(signal) {
     log('info', 'TM scrape phase starting');
+    // Test-scrape mode (dev iteration aid, see 00-config.js): restrict the
+    // subcat walk to TM_TEST_SUBCAT_SLUGS when the dashboard checkbox is on.
+    const activeSubcats = BSNZ.config.test_scrape_mode
+      ? TM_SUBCATS.filter((s) => TM_TEST_SUBCAT_SLUGS.includes(s.slug))
+      : TM_SUBCATS;
+    if (BSNZ.config.test_scrape_mode) {
+      log('info', `Test-scrape mode active — walking ${activeSubcats.length} subcats: ${activeSubcats.map((s) => s.slug).join(', ')}`);
+    }
     runHistoryStartPhase('tm_scrape');
     BSNZ.tm_listings = [];
     BSNZ.stats.tm_scraped = 0;
@@ -1323,8 +1364,8 @@
     // if the parse failed for that subcat.
     const announcedTotals = [];
 
-    for (let i = 0; i < TM_SUBCATS.length; i++) {
-      const subcat = TM_SUBCATS[i];
+    for (let i = 0; i < activeSubcats.length; i++) {
+      const subcat = activeSubcats[i];
       let pageUrl = TM_ORIGIN + subcat.path;
       let pageNum = 1;
       const subcatBaseUrl = pageUrl;
@@ -1400,15 +1441,15 @@
       // Pace between subcats too — back-to-back hits on the same TM origin
       // would defeat the polite-rate guard. Skip the trailing sleep after the
       // last subcat so the phase ends promptly.
-      if (i < TM_SUBCATS.length - 1) {
+      if (i < activeSubcats.length - 1) {
         await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
       }
     }
     runHistoryEndPhase('tm_scrape', {
       listings_scraped: BSNZ.tm_listings.length,
-      subcat_count: TM_SUBCATS.length
+      subcat_count: activeSubcats.length
     });
-    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`, {
+    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${activeSubcats.length} subcats`, {
       consoleMsg: `TM scrape complete: scraped=${BSNZ.tm_listings.length} announced_totals=[${announcedTotals.join(',')}] sum_announced=${announcedTotals.reduce((a, b) => a + (b || 0), 0)}`
     });
   }
