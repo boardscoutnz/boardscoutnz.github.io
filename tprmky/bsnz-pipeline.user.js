@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.5.1
+// @version      0.5.2
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.5.1';
+  const VERSION = '0.5.2';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -232,6 +232,11 @@
 // closure scope. Inline styles only — no <style> tag, to avoid clashing
 // with TM's own CSS.
 
+  // DOM cap for the panel log. Mirrors LOG_CAP in 00-config.js (which caps
+  // the in-memory BSNZ.log array). Declared locally so this file remains
+  // standalone-readable; if you bump LOG_CAP, bump this too.
+  const PANEL_LOG_CAP = 500;
+
   // Trade Me embeds search results / ads in iframes; the panel must only
   // appear in the top frame. Bail early before any DOM work.
   if (window.top !== window.self) return;
@@ -358,11 +363,21 @@
     });
     btnRow.append(bsnzUi.runBtn, bsnzUi.cancelBtn, openDataBtn);
 
-    body.append(statusRow, progressWrap, bsnzUi.statsEl, logHeader, bsnzUi.logEl, btnRow);
+    // Categories panel sits between the stats grid and the log header so
+    // the user can see at a glance which subcats this run will walk and
+    // which have already completed (struck-through in red). Built once;
+    // populated via window.bsnzRenderCategories() (see 01d-categories.js).
+    bsnzUi.categoriesEl = buildCategoriesPanel();
+
+    body.append(statusRow, progressWrap, bsnzUi.statsEl,
+                bsnzUi.categoriesEl, logHeader, bsnzUi.logEl, btnRow);
     panel.append(header, body);
 
     bsnzUi.panel = panel;
     bsnzUi.body  = body;
+    if (typeof window.bsnzRenderCategories === 'function') {
+      window.bsnzRenderCategories();
+    }
     refreshRunBtnEnabled();
     return panel;
   }
@@ -579,10 +594,13 @@
       renderStats();
     } else if (phase === 'match') {
       setProgressIndeterminate(false);
-      const done = (info && info.done) || 0;
-      const total = (info && info.total) || 0;
-      if (total > 0) setProgress(100 * done / total);
-      setPhase(`Matching titles ${done}/${total}`);
+      const processed = (info && info.processed) || 0;
+      const total     = (info && info.total) || 0;
+      const exact     = (info && info.exact) || 0;
+      const fuzzy     = (info && info.fuzzy) || 0;
+      const unmatched = (info && info.unmatched) || 0;
+      if (total > 0) setProgress((processed / total) * 100);
+      setPhase(`Matching titles ${processed}/${total} (${exact} exact, ${fuzzy} fuzzy, ${unmatched} unmatched)`);
     }
   };
 
@@ -644,10 +662,10 @@
   }
 
   // --- Log subscription -----------------------------------------------------
-  // Full re-render on every log call. BSNZ.log is capped (see 00-config.js)
-  // so this is cheap. Auto-scrolls to the newest entry unless the user has
-  // scrolled up to inspect older lines (within ~20px of bottom counts as
-  // "still following the tail"); preserves their scroll position otherwise.
+  // Newest-on-top renderer. Each log() call prepends a single row; on initial
+  // render after panel construction, BSNZ.log is replayed in order so newest
+  // ends up at the top. Avoids the scrollHeight read that the full-rebuild
+  // model performed on every entry (and the forced layout cost it implied).
   function htmlEscape(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -656,33 +674,40 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
   }
-  function renderLog() {
-    if (!bsnzUi.logEl) return;
-    const entries = BSNZ.log || [];
-    const elBox = bsnzUi.logEl;
-    const distFromBottom = elBox.scrollHeight - elBox.scrollTop - elBox.clientHeight;
-    const wasNearBottom = distFromBottom <= 20;
-    elBox.replaceChildren();
-    for (const entry of entries) {
-      const colour = entry.level === 'error' ? '#c0392b'
-                   : entry.level === 'warn'  ? '#b7791f'
-                   : entry.level === 'debug' ? '#666'
-                   : '#1a1a1a';
-      const prefix = `${entry.ts.slice(11, 19)} [${entry.level}] `;
-      const escapedMsg = htmlEscape(entry.msg);
-      let html = htmlEscape(prefix) + escapedMsg;
-      if (entry.link && entry.link.href && entry.link.text) {
-        const escapedHref = htmlEscape(entry.link.href);
-        const escapedText = htmlEscape(entry.link.text);
-        html += ' ' + '<a href="' + escapedHref +
-                '" target="_blank" rel="noreferrer">' +
-                escapedText + '</a>';
-      }
-      elBox.append(el('div', {
-        color: colour, marginBottom: '2px', lineHeight: '12px'
-      }, { html }));
+  function buildLogRow(entry) {
+    const colour = entry.level === 'error' ? '#c0392b'
+                 : entry.level === 'warn'  ? '#b7791f'
+                 : entry.level === 'debug' ? '#666'
+                 : '#1a1a1a';
+    const prefix = `${entry.ts.slice(11, 19)} [${entry.level}] `;
+    const escapedMsg = htmlEscape(entry.msg);
+    let html = htmlEscape(prefix) + escapedMsg;
+    if (entry.link && entry.link.href && entry.link.text) {
+      const escapedHref = htmlEscape(entry.link.href);
+      const escapedText = htmlEscape(entry.link.text);
+      html += ' ' + '<a href="' + escapedHref +
+              '" target="_blank" rel="noreferrer">' +
+              escapedText + '</a>';
     }
-    if (wasNearBottom) elBox.scrollTop = elBox.scrollHeight;
+    return el('div', {
+      color: colour, marginBottom: '2px', lineHeight: '12px'
+    }, { html });
+  }
+  function renderLog(entry) {
+    if (!bsnzUi.logEl) return;
+    const elBox = bsnzUi.logEl;
+    if (entry) {
+      elBox.insertBefore(buildLogRow(entry), elBox.firstChild);
+    } else {
+      elBox.replaceChildren();
+      const entries = BSNZ.log || [];
+      for (const e of entries) {
+        elBox.insertBefore(buildLogRow(e), elBox.firstChild);
+      }
+    }
+    while (elBox.childNodes.length > PANEL_LOG_CAP) {
+      elBox.removeChild(elBox.lastChild);
+    }
   }
   window.bsnzOnLogEntry = renderLog;
 
@@ -925,6 +950,9 @@
       type: 'checkbox', checked: !!cfg.test_scrape_mode,
       on: { change: () => {
         saveConfigKey('test_scrape_mode', testCb.checked);
+        if (typeof window.bsnzRenderCategories === 'function') {
+          window.bsnzRenderCategories();
+        }
         if (testCb.checked) {
           log('info', `Test-scrape mode enabled — next run will only scrape ${TM_TEST_SUBCAT_SLUGS.join(' / ')}.`);
         } else {
@@ -1325,6 +1353,70 @@
     runHistoryOverlay = overlay;
     return overlay;
   }
+// tprmky/bsnz-pipeline-src/01d-categories.js
+// Categories panel for the BSNZ Pipeline dashboard. Lists the TM subcats
+// the next/current run will walk; each name turns red + struck-through as
+// 02-tm-scraper.js reports it complete. Runs inside the shared IIFE
+// opened in 00-config.js — references TM_SUBCATS, TM_TEST_SUBCAT_SLUGS,
+// and BSNZ from closure scope.
+
+  let _categoriesStyleInjected = false;
+  function ensureCategoriesStyle() {
+    if (_categoriesStyleInjected) return;
+    const s = document.createElement('style');
+    s.textContent =
+      '.bsnz-categories-panel { padding: 6px 0; }' +
+      '.bsnz-categories-header { text-align: center; font-weight: 600;' +
+      ' font-size: 12px; letter-spacing: 0.5px; color: #555;' +
+      ' margin-bottom: 6px; }' +
+      '.bsnz-categories-grid { display: grid;' +
+      ' grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 12px;' +
+      ' padding: 0 16px; }' +
+      '.bsnz-cat { color: #1a1a1a; }' +
+      '.bsnz-cat.done { color: #c0392b; text-decoration: line-through;' +
+      ' text-decoration-color: #c0392b; }';
+    document.head.appendChild(s);
+    _categoriesStyleInjected = true;
+  }
+
+  // Build the panel DOM once. Returns the root <div> for buildPanel() to
+  // splice into the body. Initial population is left to the caller via
+  // window.bsnzRenderCategories().
+  function buildCategoriesPanel() {
+    ensureCategoriesStyle();
+    const panel = document.createElement('div');
+    panel.className = 'bsnz-categories-panel';
+    panel.id = 'bsnz-categories-panel';
+    const header = document.createElement('div');
+    header.className = 'bsnz-categories-header';
+    header.textContent = 'CATEGORIES:';
+    const grid = document.createElement('div');
+    grid.className = 'bsnz-categories-grid';
+    grid.id = 'bsnz-categories-grid';
+    panel.append(header, grid);
+    return panel;
+  }
+
+  // Idempotent re-render. opts.active defaults to the current
+  // test_scrape_mode-derived list; opts.completed defaults to empty.
+  window.bsnzRenderCategories = function (opts) {
+    opts = opts || {};
+    const grid = document.getElementById('bsnz-categories-grid');
+    if (!grid) return;
+    const active = opts.active || (
+      BSNZ.config && BSNZ.config.test_scrape_mode
+        ? TM_SUBCATS.filter((s) => TM_TEST_SUBCAT_SLUGS.includes(s.slug))
+        : TM_SUBCATS
+    );
+    const completedSet = new Set(opts.completed || []);
+    grid.replaceChildren();
+    for (const subcat of active) {
+      const span = document.createElement('span');
+      span.className = 'bsnz-cat' + (completedSet.has(subcat.slug) ? ' done' : '');
+      span.textContent = subcat.name;
+      grid.append(span);
+    }
+  };
 // tprmky/bsnz-pipeline-src/02-tm-scraper.js
 // ===== TM scraper module =====
 // Inputs:  TM_SUBCATS (from 00-config.js) — 8 hardcoded subcategory paths.
@@ -1364,6 +1456,16 @@
     // if the parse failed for that subcat.
     const announcedTotals = [];
 
+    // Categories panel: reset to "all active, none completed" at the start
+    // of every run so the user sees the upcoming walk before any work begins.
+    const completedSubcatSlugs = [];
+    if (typeof window.bsnzRenderCategories === 'function') {
+      window.bsnzRenderCategories({ active: activeSubcats, completed: [] });
+    }
+    // Heap-diagnostic counter: log a usedJSHeapSize line every 10 pages so a
+    // run that's heading for an OOM is visible before it falls over.
+    let pageLoopCounter = 0;
+
     for (let i = 0; i < activeSubcats.length; i++) {
       const subcat = activeSubcats[i];
       let pageUrl = TM_ORIGIN + subcat.path;
@@ -1373,6 +1475,16 @@
       const subcatStartTotal = BSNZ.tm_listings.length;
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
+        // Heap watch every 10 pages — surfaces runaway DOM/string retention
+        // before the tab OOMs.
+        pageLoopCounter++;
+        if (pageLoopCounter % 10 === 0 &&
+            typeof performance !== 'undefined' && performance.memory) {
+          log('debug',
+            `heap: ${Math.round(performance.memory.usedJSHeapSize / 1024 / 1024)}MB used / ` +
+            `${Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024)}MB limit; ` +
+            `tm_listings=${BSNZ.tm_listings.length}`);
+        }
         let html;
         try {
           html = await fetchTMPageHtml(pageUrl, signal);
@@ -1388,7 +1500,12 @@
           }
           throw err;
         }
+        // Yield so the host tab can paint and GC the response string before
+        // we parse it into a DOMParser tree.
+        await new Promise((r) => setTimeout(r, 0));
         const { listings, totalResults, hasNextPage } = parseTMListingsPage(html);
+        // Yield again so the parsed DOM tree can be GC'd before the next fetch.
+        await new Promise((r) => setTimeout(r, 0));
         let added = 0;
         for (const listing of listings) {
           if (seen.has(listing.tm_id)) continue;
@@ -1437,6 +1554,14 @@
         if (pageUrl) {
           await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
         }
+      }
+      // Subcat done — strike it through in the dashboard categories panel.
+      // Reached only via the hasNextPage / page-cap break paths; if the run
+      // was aborted mid-subcat the `if (signal.aborted) throw` above exits
+      // first, which is correct (don't mark partial work as complete).
+      completedSubcatSlugs.push(subcat.slug);
+      if (typeof window.bsnzRenderCategories === 'function') {
+        window.bsnzRenderCategories({ active: activeSubcats, completed: completedSubcatSlugs });
       }
       // Pace between subcats too — back-to-back hits on the same TM origin
       // would defeat the polite-rate guard. Skip the trailing sleep after the
@@ -2057,7 +2182,20 @@
         bucket.add(i);
       }
     }
-    return { byId, byNormName, nameEntries, tokenToEntryIdx };
+    // Build the tier-3 Fuse index ONCE here. Reconstructing per matchTitle()
+    // call costs ~50–200ms per ~5k-entry index; multiplying that across ~2k
+    // tier-3 fallbacks added minutes of pure index-construction to a run.
+    const fuse = (typeof Fuse !== 'undefined')
+      ? new Fuse(nameEntries, {
+          keys: ['normName'],
+          threshold: FUZZY_MATCH_THRESHOLD,
+          ignoreLocation: true,
+          minMatchCharLength: 3,
+          includeScore: true
+        })
+      : null;
+    log('info', `Tier-3 Fuse index built (${nameEntries.length} entries)`);
+    return { byId, byNormName, nameEntries, tokenToEntryIdx, fuse };
   }
 
   // --- Phase entry point ----------------------------------------------------
@@ -2309,26 +2447,10 @@
   // in buildIndexes (03-bgg-corpus.js); this is the runtime guard.
   const MIN_SINGLE_TOKEN_LEN = 6;
 
-  // Lazily-built Fuse instance over BSNZ.bgg_corpus.nameEntries. Built on
-  // first matchTitle() call and discarded when the corpus is replaced (we
-  // key it by the corpus identity via a stored reference).
-  let _fuse = null;
-  let _fuseCorpusRef = null;
-  function _getFuse() {
-    const entries = BSNZ.bgg_corpus && BSNZ.bgg_corpus.nameEntries;
-    if (!entries) return null;
-    if (_fuse && _fuseCorpusRef === entries) return _fuse;
-    if (typeof Fuse === 'undefined') return null;
-    _fuse = new Fuse(entries, {
-      keys: ['normName'],
-      includeScore: true,
-      threshold: FUZZY_MATCH_THRESHOLD,
-      ignoreLocation: true,
-      minMatchCharLength: 3
-    });
-    _fuseCorpusRef = entries;
-    return _fuse;
-  }
+  // Process titles in batches of this size, yielding to the event loop
+  // between batches so the host TM tab keeps painting and the abort signal
+  // can be observed promptly. Mirrors the js/06-matching.js pattern.
+  const MATCH_BATCH_SIZE = 250;
 
   // Walk listing tokens looking for the BGG tokens in sequence, allowing
   // arbitrary gaps. Returns {start, inOrder, contiguous}. Mirrors
@@ -2466,7 +2588,9 @@
     }
 
     // Tier 3 — Fuse.js fuzzy fallback against nameEntries[].normName.
-    const fuse = _getFuse();
+    // Uses the singleton Fuse instance built once in 03-bgg-corpus.js's
+    // buildIndexes (not per-call — see VERSION 0.5.2 fix).
+    const fuse = corpus.fuse;
     if (!fuse) return null;
     const hits = fuse.search(normTitle);
     if (!hits.length) return null;
@@ -2489,7 +2613,9 @@
     BSNZ.title_to_bgg = new Map();
     BSNZ.unmatched_titles = [];
     const uniqueTitles = [...new Set(BSNZ.tm_listings.map((l) => l.tm_title))];
-    for (let i = 0; i < uniqueTitles.length; i++) {
+    const total = uniqueTitles.length;
+    let exact = 0, fuzzy = 0, unmatched = 0;
+    for (let i = 0; i < total; i++) {
       if (signal.aborted) throw new Error('aborted');
       const raw = uniqueTitles[i];
       const norm = normaliseTitle(raw);
@@ -2501,22 +2627,37 @@
         } else {
           BSNZ.title_to_bgg.set(norm, { id: override.id, method: 'manual_override', confidence: 1.0 });
         }
-        continue;
+      } else {
+        const result = matchTitle(raw, norm);
+        if (result) {
+          BSNZ.title_to_bgg.set(norm, result);
+          if (result.method === 'exact_match') {
+            exact++;
+            BSNZ.stats.exact_matches = (BSNZ.stats.exact_matches || 0) + 1;
+          } else {
+            fuzzy++;
+            BSNZ.stats.fuzzy_matches = (BSNZ.stats.fuzzy_matches || 0) + 1;
+          }
+        } else {
+          unmatched++;
+          BSNZ.unmatched_titles.push({ raw, norm });
+        }
       }
 
-      const result = matchTitle(raw, norm);
-      if (result) {
-        BSNZ.title_to_bgg.set(norm, result);
-        if (result.method === 'exact_match') {
-          BSNZ.stats.exact_matches = (BSNZ.stats.exact_matches || 0) + 1;
-        } else {
-          BSNZ.stats.fuzzy_matches = (BSNZ.stats.fuzzy_matches || 0) + 1;
+      // After each batch, yield to the event loop so the host tab can
+      // paint and the abort signal can be observed. A synchronous loop
+      // over ~2000+ titles previously hung the tab silently.
+      const processed = i + 1;
+      if (processed % MATCH_BATCH_SIZE === 0 || processed === total) {
+        if (typeof window.bsnzUpdateProgress === 'function') {
+          window.bsnzUpdateProgress('match', {
+            processed, total, exact, fuzzy, unmatched
+          });
         }
-      } else {
-        BSNZ.unmatched_titles.push({ raw, norm });
-      }
-      if (typeof window.bsnzUpdateProgress === 'function') {
-        window.bsnzUpdateProgress('match', { done: i + 1, total: uniqueTitles.length });
+        log('info', `Match progress: ${processed}/${total} (${exact} exact, ${fuzzy} fuzzy, ${unmatched} unmatched)`);
+        if (processed < total) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
       }
     }
     log('info', `Match: ${BSNZ.title_to_bgg.size} matched, ${BSNZ.unmatched_titles.length} unmatched`);

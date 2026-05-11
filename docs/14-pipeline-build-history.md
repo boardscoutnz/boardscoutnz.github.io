@@ -28,6 +28,59 @@ for numbered plan steps, or "<branch-slug>" for fix/chore sessions.
 
 <!-- INSERT NEW ENTRIES BELOW THIS LINE -->
 
+## fix/run-pipeline-performance — 2026-05-11
+**Branch:** fix/run-pipeline-performance
+**Files touched:** tprmky/bsnz-pipeline-src/00-config.js (VERSION 0.5.1 →
+0.5.2 + header),
+tprmky/bsnz-pipeline-src/03-bgg-corpus.js (build singleton tier-3 Fuse
+index inside buildIndexes; expose as BSNZ.bgg_corpus.fuse),
+tprmky/bsnz-pipeline-src/05-fuzzy-match.js (drop per-call _getFuse
+factory, use shared corpus.fuse; refactor runMatchPhase to async-batch
+in MATCH_BATCH_SIZE=250 chunks with `await setTimeout(r,0)` between
+batches; emit one info log + bsnzUpdateProgress call per batch with
+processed/total/exact/fuzzy/unmatched),
+tprmky/bsnz-pipeline-src/01-ui.js (refactor renderLog to prepend-on-top
+single-row insertBefore + buildLogRow helper; remove all
+scrollHeight/scrollTop reads; cap DOM children at PANEL_LOG_CAP=500;
+extend bsnzUpdateProgress 'match' branch with the new info shape; wire
+the categories panel into buildPanel between statsEl and logHeader),
+tprmky/bsnz-pipeline-src/01a-settings.js (call bsnzRenderCategories
+from the test_scrape_mode checkbox change handler so the panel reflects
+the toggle state immediately),
+tprmky/bsnz-pipeline-src/01d-categories.js (new sibling module —
+buildCategoriesPanel + window.bsnzRenderCategories; CSS injected via
+single ensureCategoriesStyle on first build),
+tprmky/bsnz-pipeline-src/02-tm-scraper.js (add two `await
+setTimeout(r,0)` yields per page around the DOMParser call; emit a
+heap-usage debug log every 10 pages when performance.memory is
+available; reset categories panel at runScrapePhase start and mark each
+subcat done via bsnzRenderCategories at the post-while-loop site
+(skipped on abort, by construction)),
+tprmky/bsnz-pipeline.user.js (rebuilt),
+docs/13-pipeline-pre-merged-data.md (dashboard description: CATEGORIES
+panel + match-phase progress paragraph).
+**Behaviour delta:** A full v0.5.1 pipeline run hung the host TM tab
+silently after "Match phase starting" because (a) runMatchPhase was a
+synchronous for-loop over ~2100 unique titles with no event-loop yields,
+and (b) the tier-3 Fuse instance was being rebuilt inside matchTitle on
+every call (~50–200ms × ~2000 = several minutes of pure index
+construction). Both are fixed: the Fuse index is now built once in
+buildIndexes (logged as "Tier-3 Fuse index built (N entries)") and
+runMatchPhase yields between 250-title batches, emitting a "Match
+progress: X/Y (E exact, F fuzzy, U unmatched)" log line + driving the
+progress bar each batch. The tab stays responsive throughout. UX
+improvements folded in: log lines now appear newest-on-top with no
+scrollHeight/scrollTop reads (eliminates the forced-layout cost of the
+old full-rebuild renderer), and a CATEGORIES panel on the dashboard
+lists the subcats the run will walk with each one struck through in red
+as it completes. Heap usage is logged every 10 TM pages (debug level)
+to make pre-OOM creep visible.
+**Follow-ups:** 01-ui.js is now 638 lines (was 613) — still over the
+500-line threshold, carried over from Step 6. A future extraction
+session should split the renderLog/log-row helpers and/or the
+unmatched-section block into a sibling module. Not blocking for this
+fix.
+
 ## feature/test-scrape-mode — 2026-05-11
 **Branch:** feature/test-scrape-mode
 **Files touched:** tprmky/bsnz-pipeline-src/00-config.js (VERSION 0.5.0 →

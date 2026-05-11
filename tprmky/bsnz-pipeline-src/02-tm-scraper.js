@@ -37,6 +37,16 @@
     // if the parse failed for that subcat.
     const announcedTotals = [];
 
+    // Categories panel: reset to "all active, none completed" at the start
+    // of every run so the user sees the upcoming walk before any work begins.
+    const completedSubcatSlugs = [];
+    if (typeof window.bsnzRenderCategories === 'function') {
+      window.bsnzRenderCategories({ active: activeSubcats, completed: [] });
+    }
+    // Heap-diagnostic counter: log a usedJSHeapSize line every 10 pages so a
+    // run that's heading for an OOM is visible before it falls over.
+    let pageLoopCounter = 0;
+
     for (let i = 0; i < activeSubcats.length; i++) {
       const subcat = activeSubcats[i];
       let pageUrl = TM_ORIGIN + subcat.path;
@@ -46,6 +56,16 @@
       const subcatStartTotal = BSNZ.tm_listings.length;
       while (pageUrl) {
         if (signal.aborted) throw new Error('aborted');
+        // Heap watch every 10 pages — surfaces runaway DOM/string retention
+        // before the tab OOMs.
+        pageLoopCounter++;
+        if (pageLoopCounter % 10 === 0 &&
+            typeof performance !== 'undefined' && performance.memory) {
+          log('debug',
+            `heap: ${Math.round(performance.memory.usedJSHeapSize / 1024 / 1024)}MB used / ` +
+            `${Math.round(performance.memory.jsHeapSizeLimit / 1024 / 1024)}MB limit; ` +
+            `tm_listings=${BSNZ.tm_listings.length}`);
+        }
         let html;
         try {
           html = await fetchTMPageHtml(pageUrl, signal);
@@ -61,7 +81,12 @@
           }
           throw err;
         }
+        // Yield so the host tab can paint and GC the response string before
+        // we parse it into a DOMParser tree.
+        await new Promise((r) => setTimeout(r, 0));
         const { listings, totalResults, hasNextPage } = parseTMListingsPage(html);
+        // Yield again so the parsed DOM tree can be GC'd before the next fetch.
+        await new Promise((r) => setTimeout(r, 0));
         let added = 0;
         for (const listing of listings) {
           if (seen.has(listing.tm_id)) continue;
@@ -110,6 +135,14 @@
         if (pageUrl) {
           await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
         }
+      }
+      // Subcat done — strike it through in the dashboard categories panel.
+      // Reached only via the hasNextPage / page-cap break paths; if the run
+      // was aborted mid-subcat the `if (signal.aborted) throw` above exits
+      // first, which is correct (don't mark partial work as complete).
+      completedSubcatSlugs.push(subcat.slug);
+      if (typeof window.bsnzRenderCategories === 'function') {
+        window.bsnzRenderCategories({ active: activeSubcats, completed: completedSubcatSlugs });
       }
       // Pace between subcats too — back-to-back hits on the same TM origin
       // would defeat the polite-rate guard. Skip the trailing sleep after the

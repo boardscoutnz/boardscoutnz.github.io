@@ -169,6 +169,18 @@ via `GM_setValue`. The active slug list is also surfaced as a tooltip on
 the checkbox label, and an info-level log line confirms the active set on
 each run start.
 
+A **CATEGORIES** panel (added in v0.5.2) sits between the stats grid and the
+log on the dashboard. It lists the subcat names that the next/current run
+will walk — the full 8-entry TM_SUBCATS set, or the 3-slug test subset when
+test-scrape mode is on. As each subcat finishes during a run, its name turns
+red and is struck through, so the user can see at a glance how far through
+the scrape phase the run is. The panel reflects the test-mode toggle
+immediately when the checkbox state changes. Match-phase progress is now
+also surfaced in the status line as `Matching titles X/Y (E exact, F fuzzy,
+U unmatched)` with a moving progress bar, updating every 250 titles
+(MATCH_BATCH_SIZE), so the previously-silent match phase no longer looks
+like a hang on large corpora.
+
 ### File location
 
 `data/bsnz.json` — committed to the repo via the GitHub Contents API by the

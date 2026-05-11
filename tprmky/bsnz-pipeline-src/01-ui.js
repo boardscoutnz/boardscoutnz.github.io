@@ -5,6 +5,11 @@
 // closure scope. Inline styles only — no <style> tag, to avoid clashing
 // with TM's own CSS.
 
+  // DOM cap for the panel log. Mirrors LOG_CAP in 00-config.js (which caps
+  // the in-memory BSNZ.log array). Declared locally so this file remains
+  // standalone-readable; if you bump LOG_CAP, bump this too.
+  const PANEL_LOG_CAP = 500;
+
   // Trade Me embeds search results / ads in iframes; the panel must only
   // appear in the top frame. Bail early before any DOM work.
   if (window.top !== window.self) return;
@@ -131,11 +136,21 @@
     });
     btnRow.append(bsnzUi.runBtn, bsnzUi.cancelBtn, openDataBtn);
 
-    body.append(statusRow, progressWrap, bsnzUi.statsEl, logHeader, bsnzUi.logEl, btnRow);
+    // Categories panel sits between the stats grid and the log header so
+    // the user can see at a glance which subcats this run will walk and
+    // which have already completed (struck-through in red). Built once;
+    // populated via window.bsnzRenderCategories() (see 01d-categories.js).
+    bsnzUi.categoriesEl = buildCategoriesPanel();
+
+    body.append(statusRow, progressWrap, bsnzUi.statsEl,
+                bsnzUi.categoriesEl, logHeader, bsnzUi.logEl, btnRow);
     panel.append(header, body);
 
     bsnzUi.panel = panel;
     bsnzUi.body  = body;
+    if (typeof window.bsnzRenderCategories === 'function') {
+      window.bsnzRenderCategories();
+    }
     refreshRunBtnEnabled();
     return panel;
   }
@@ -352,10 +367,13 @@
       renderStats();
     } else if (phase === 'match') {
       setProgressIndeterminate(false);
-      const done = (info && info.done) || 0;
-      const total = (info && info.total) || 0;
-      if (total > 0) setProgress(100 * done / total);
-      setPhase(`Matching titles ${done}/${total}`);
+      const processed = (info && info.processed) || 0;
+      const total     = (info && info.total) || 0;
+      const exact     = (info && info.exact) || 0;
+      const fuzzy     = (info && info.fuzzy) || 0;
+      const unmatched = (info && info.unmatched) || 0;
+      if (total > 0) setProgress((processed / total) * 100);
+      setPhase(`Matching titles ${processed}/${total} (${exact} exact, ${fuzzy} fuzzy, ${unmatched} unmatched)`);
     }
   };
 
@@ -417,10 +435,10 @@
   }
 
   // --- Log subscription -----------------------------------------------------
-  // Full re-render on every log call. BSNZ.log is capped (see 00-config.js)
-  // so this is cheap. Auto-scrolls to the newest entry unless the user has
-  // scrolled up to inspect older lines (within ~20px of bottom counts as
-  // "still following the tail"); preserves their scroll position otherwise.
+  // Newest-on-top renderer. Each log() call prepends a single row; on initial
+  // render after panel construction, BSNZ.log is replayed in order so newest
+  // ends up at the top. Avoids the scrollHeight read that the full-rebuild
+  // model performed on every entry (and the forced layout cost it implied).
   function htmlEscape(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -429,33 +447,40 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
   }
-  function renderLog() {
-    if (!bsnzUi.logEl) return;
-    const entries = BSNZ.log || [];
-    const elBox = bsnzUi.logEl;
-    const distFromBottom = elBox.scrollHeight - elBox.scrollTop - elBox.clientHeight;
-    const wasNearBottom = distFromBottom <= 20;
-    elBox.replaceChildren();
-    for (const entry of entries) {
-      const colour = entry.level === 'error' ? '#c0392b'
-                   : entry.level === 'warn'  ? '#b7791f'
-                   : entry.level === 'debug' ? '#666'
-                   : '#1a1a1a';
-      const prefix = `${entry.ts.slice(11, 19)} [${entry.level}] `;
-      const escapedMsg = htmlEscape(entry.msg);
-      let html = htmlEscape(prefix) + escapedMsg;
-      if (entry.link && entry.link.href && entry.link.text) {
-        const escapedHref = htmlEscape(entry.link.href);
-        const escapedText = htmlEscape(entry.link.text);
-        html += ' ' + '<a href="' + escapedHref +
-                '" target="_blank" rel="noreferrer">' +
-                escapedText + '</a>';
-      }
-      elBox.append(el('div', {
-        color: colour, marginBottom: '2px', lineHeight: '12px'
-      }, { html }));
+  function buildLogRow(entry) {
+    const colour = entry.level === 'error' ? '#c0392b'
+                 : entry.level === 'warn'  ? '#b7791f'
+                 : entry.level === 'debug' ? '#666'
+                 : '#1a1a1a';
+    const prefix = `${entry.ts.slice(11, 19)} [${entry.level}] `;
+    const escapedMsg = htmlEscape(entry.msg);
+    let html = htmlEscape(prefix) + escapedMsg;
+    if (entry.link && entry.link.href && entry.link.text) {
+      const escapedHref = htmlEscape(entry.link.href);
+      const escapedText = htmlEscape(entry.link.text);
+      html += ' ' + '<a href="' + escapedHref +
+              '" target="_blank" rel="noreferrer">' +
+              escapedText + '</a>';
     }
-    if (wasNearBottom) elBox.scrollTop = elBox.scrollHeight;
+    return el('div', {
+      color: colour, marginBottom: '2px', lineHeight: '12px'
+    }, { html });
+  }
+  function renderLog(entry) {
+    if (!bsnzUi.logEl) return;
+    const elBox = bsnzUi.logEl;
+    if (entry) {
+      elBox.insertBefore(buildLogRow(entry), elBox.firstChild);
+    } else {
+      elBox.replaceChildren();
+      const entries = BSNZ.log || [];
+      for (const e of entries) {
+        elBox.insertBefore(buildLogRow(e), elBox.firstChild);
+      }
+    }
+    while (elBox.childNodes.length > PANEL_LOG_CAP) {
+      elBox.removeChild(elBox.lastChild);
+    }
   }
   window.bsnzOnLogEntry = renderLog;
 

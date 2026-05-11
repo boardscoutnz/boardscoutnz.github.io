@@ -284,7 +284,20 @@
         bucket.add(i);
       }
     }
-    return { byId, byNormName, nameEntries, tokenToEntryIdx };
+    // Build the tier-3 Fuse index ONCE here. Reconstructing per matchTitle()
+    // call costs ~50–200ms per ~5k-entry index; multiplying that across ~2k
+    // tier-3 fallbacks added minutes of pure index-construction to a run.
+    const fuse = (typeof Fuse !== 'undefined')
+      ? new Fuse(nameEntries, {
+          keys: ['normName'],
+          threshold: FUZZY_MATCH_THRESHOLD,
+          ignoreLocation: true,
+          minMatchCharLength: 3,
+          includeScore: true
+        })
+      : null;
+    log('info', `Tier-3 Fuse index built (${nameEntries.length} entries)`);
+    return { byId, byNormName, nameEntries, tokenToEntryIdx, fuse };
   }
 
   // --- Phase entry point ----------------------------------------------------
