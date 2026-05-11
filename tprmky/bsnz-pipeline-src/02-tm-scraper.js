@@ -17,6 +17,14 @@
 
   async function runScrapePhase(signal) {
     log('info', 'TM scrape phase starting');
+    // Test-scrape mode (dev iteration aid, see 00-config.js): restrict the
+    // subcat walk to TM_TEST_SUBCAT_SLUGS when the dashboard checkbox is on.
+    const activeSubcats = BSNZ.config.test_scrape_mode
+      ? TM_SUBCATS.filter((s) => TM_TEST_SUBCAT_SLUGS.includes(s.slug))
+      : TM_SUBCATS;
+    if (BSNZ.config.test_scrape_mode) {
+      log('info', `Test-scrape mode active — walking ${activeSubcats.length} subcats: ${activeSubcats.map((s) => s.slug).join(', ')}`);
+    }
     runHistoryStartPhase('tm_scrape');
     BSNZ.tm_listings = [];
     BSNZ.stats.tm_scraped = 0;
@@ -29,8 +37,8 @@
     // if the parse failed for that subcat.
     const announcedTotals = [];
 
-    for (let i = 0; i < TM_SUBCATS.length; i++) {
-      const subcat = TM_SUBCATS[i];
+    for (let i = 0; i < activeSubcats.length; i++) {
+      const subcat = activeSubcats[i];
       let pageUrl = TM_ORIGIN + subcat.path;
       let pageNum = 1;
       const subcatBaseUrl = pageUrl;
@@ -106,15 +114,15 @@
       // Pace between subcats too — back-to-back hits on the same TM origin
       // would defeat the polite-rate guard. Skip the trailing sleep after the
       // last subcat so the phase ends promptly.
-      if (i < TM_SUBCATS.length - 1) {
+      if (i < activeSubcats.length - 1) {
         await tmSleep(BSNZ.config.pacing_multiplier * TM_REQUEST_DELAY_MS, signal);
       }
     }
     runHistoryEndPhase('tm_scrape', {
       listings_scraped: BSNZ.tm_listings.length,
-      subcat_count: TM_SUBCATS.length
+      subcat_count: activeSubcats.length
     });
-    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${TM_SUBCATS.length} subcats`, {
+    log('info', `TM scrape complete: ${BSNZ.tm_listings.length} listings across ${activeSubcats.length} subcats`, {
       consoleMsg: `TM scrape complete: scraped=${BSNZ.tm_listings.length} announced_totals=[${announcedTotals.join(',')}] sum_announced=${announcedTotals.reduce((a, b) => a + (b || 0), 0)}`
     });
   }

@@ -74,6 +74,27 @@
       text: '(see docs/13-pipeline-pre-merged-data.md)'
     });
 
+    // Test-scrape mode (dev iteration aid). Limits runScrapePhase to the 3
+    // slugs in TM_TEST_SUBCAT_SLUGS (00-config.js). Placed in the settings
+    // dialog rather than the main panel because 01-ui.js is already over the
+    // ~500-line cap. Tooltip lists the active slugs so a hover surfaces them.
+    const testRow = el('label', {
+      display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
+    }, { title: TM_TEST_SUBCAT_SLUGS.join(', ') });
+    const testCb = el('input', {}, {
+      type: 'checkbox', checked: !!cfg.test_scrape_mode,
+      on: { change: () => {
+        saveConfigKey('test_scrape_mode', testCb.checked);
+        if (testCb.checked) {
+          log('info', `Test-scrape mode enabled — next run will only scrape ${TM_TEST_SUBCAT_SLUGS.join(' / ')}.`);
+        } else {
+          log('info', `Test-scrape mode disabled — next run will scrape all ${TM_SUBCATS.length} subcats.`);
+        }
+      }}
+    });
+    testRow.append(testCb,
+      el('span', null, { text: 'Test scrape (3 subcats only)' }));
+
     // Auto-commit
     const autoRow = el('label', {
       display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'
@@ -156,6 +177,7 @@
       titleRow,
       patLabel, patStatus, patInput, patBtnRow,
       tmInfo, tmInfoHint,
+      testRow,
       autoRow,
       crawlLabel, crawlSeg,
       clearWrap

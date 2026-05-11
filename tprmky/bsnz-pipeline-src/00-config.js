@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.5.0
+// @version      0.5.1
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -34,7 +34,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.5.0';
+  const VERSION = '0.5.1';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -125,6 +125,14 @@
       path: '/a/marketplace/toys-models/games-puzzles-tricks/other' }
   ];
 
+  // Deliberate dev/iteration aid. When `test_scrape_mode` is on, the TM
+  // scraper restricts itself to this fixed subset of TM_SUBCATS slugs so a
+  // round-trip through the pipeline finishes in a fraction of the time.
+  // Keep these slugs in sync with the TM_SUBCATS array above — if a slug is
+  // renamed there, update it here too or the filter will silently match
+  // nothing for that entry.
+  const TM_TEST_SUBCAT_SLUGS = ['childrens-games', 'dice-games', 'word-games'];
+
   // --- Global state holder --------------------------------------------------
   // One mutable object that every later module reads and writes. Kept as a
   // single named root so the console-poke surface is `BSNZ.…`.
@@ -159,7 +167,10 @@
       bgg_corpus_max_rank:          GM_getValue('bgg_corpus_max_rank',             5000),
       // Optional /thing enrichment (Step 7 wires the call site). When false,
       // 04-bgg-api.js's bggFetchThings is dormant.
-      enable_bgg_api_enrichment:    GM_getValue('enable_bgg_api_enrichment',       false)
+      enable_bgg_api_enrichment:    GM_getValue('enable_bgg_api_enrichment',       false),
+      // Dev/iteration aid. When true, runScrapePhase walks only the slugs in
+      // TM_TEST_SUBCAT_SLUGS rather than the full TM_SUBCATS list.
+      test_scrape_mode:             GM_getValue('test_scrape_mode',                false)
     };
   }
 

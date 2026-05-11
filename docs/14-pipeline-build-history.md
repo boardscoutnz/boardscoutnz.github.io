@@ -28,6 +28,29 @@ for numbered plan steps, or "<branch-slug>" for fix/chore sessions.
 
 <!-- INSERT NEW ENTRIES BELOW THIS LINE -->
 
+## feature/test-scrape-mode — 2026-05-11
+**Branch:** feature/test-scrape-mode
+**Files touched:** tprmky/bsnz-pipeline-src/00-config.js (VERSION 0.5.0 →
+0.5.1 + header, TM_TEST_SUBCAT_SLUGS constant, test_scrape_mode in
+loadConfig),
+tprmky/bsnz-pipeline-src/01a-settings.js (new "Test scrape (3 subcats
+only)" checkbox row above the auto-commit row in the settings dialog),
+tprmky/bsnz-pipeline-src/02-tm-scraper.js (runScrapePhase derives
+activeSubcats from TM_SUBCATS via test_scrape_mode + logs the active
+slug list when on),
+tprmky/bsnz-pipeline.user.js (rebuilt),
+docs/13-pipeline-pre-merged-data.md (dashboard paragraph updated).
+**Behaviour delta:** A new persistent "Test scrape (3 subcats only)"
+checkbox is available in the BSNZ Pipeline settings dialog. When ticked,
+runScrapePhase walks only `childrens-games`, `dice-games`, and
+`word-games` instead of all 8 TM subcats — useful for fast iteration
+during pipeline development. State is GM_setValue-backed and survives
+Tampermonkey reloads. The checkbox landed in the settings dialog
+(01a-settings.js) rather than the main panel because 01-ui.js is still
+over the 500-line threshold from the prior session.
+**Follow-ups:** 01-ui.js extraction (still 613 lines) remains the
+outstanding follow-up from Step 6 — unchanged by this session.
+
 ## Step 6 — Matcher and manual-override UI — 2026-05-11
 **Branch:** feature/pipeline-matcher
 **Files touched:** tprmky/bsnz-pipeline-src/05-fuzzy-match.js (new),
