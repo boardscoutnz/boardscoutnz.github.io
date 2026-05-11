@@ -28,6 +28,29 @@ for numbered plan steps, or "<branch-slug>" for fix/chore sessions.
 
 <!-- INSERT NEW ENTRIES BELOW THIS LINE -->
 
+## Step 6 — Matcher and manual-override UI — 2026-05-11
+**Branch:** feature/pipeline-matcher
+**Files touched:** tprmky/bsnz-pipeline-src/05-fuzzy-match.js (new),
+tprmky/bsnz-pipeline-src/00-config.js (VERSION 0.4.0 → 0.5.0 + header),
+tprmky/bsnz-pipeline-src/01-ui.js (runMatchPhase wired into Run handler;
+new bsnzShowUnmatched section; 'match' branch in bsnzUpdateProgress),
+tprmky/bsnz-pipeline.user.js (rebuilt),
+docs/13-pipeline-pre-merged-data.md (matcher paragraph appended).
+**Behaviour delta:** Run pipeline now performs the title-matching phase
+after the BGG corpus refresh. Three tiers — exact byNormName, token
+containment with position/order scoring (ported from js/06-matching.js),
+and a Fuse.js fuzzy fallback at threshold 0.4. Results populate
+BSNZ.title_to_bgg; remaining titles surface in a new "Unmatched titles"
+panel section with per-row BGG-ID input + Save (validated against the
+corpus), Search-BGG link, and Skip (sentinel override). Overrides
+persist via GM_setValue across Tampermonkey reloads. Still no
+/thing enrichment, previous-data load, merge, or commit (Step 7+).
+**Follow-ups:** 01-ui.js is now 613 lines, over the 500-line threshold.
+Proposed extraction: move the unmatched-titles section
+(buildUnmatchedSection / renderUnmatchedRow / window.bsnzShowUnmatched —
+~95 lines) into a new sibling `01c-unmatched.js` next session before
+adding further UI surface in Step 7.
+
 ## fix/pipeline-header-directives — 2026-05-10
 **Branch:** fix/pipeline-header-directives
 **Files touched:** tprmky/bsnz-pipeline-src/00-config.js,

@@ -209,6 +209,33 @@ control flow. `TM_MAX_PAGES_PER_SUBCAT` (currently 75) remains as a
 defensive fail-safe — if it ever fires, TM's pagination markup likely
 changed and the parser's selectors need updating, which is logged at WARN.
 
+The matcher module (`05-fuzzy-match.js`, added in Step 6 of the pipeline
+plan) exposes one entry point — `runMatchPhase(signal)` — which iterates
+the unique `tm_title` values from `BSNZ.tm_listings`, applies any
+GM-stored manual override first (key `override:<normName>` from
+`03-bgg-corpus.js`'s `getOverride` / `setOverride`), and otherwise calls
+the local `matchTitle(rawTitle, normTitle)` three-tier matcher. Tier 1 is
+a `BSNZ.bgg_corpus.byNormName.get` exact-string lookup. Tier 2 is the
+same multi-set token containment + position scoring as `js/06-matching.js`
+(earliest position → longest BGG name → contiguous → in-order → better
+rank; single-token candidates must sit at listing position 0 and meet
+`MIN_SINGLE_TOKEN_LEN`; 2-token out-of-order matches are rejected). Tier 3
+is a Fuse.js fuzzy fallback over `BSNZ.bgg_corpus.nameEntries` (keys
+`['normName']`, threshold `FUZZY_MATCH_THRESHOLD = 0.4`); unlike the
+site-side matcher (which keeps Fuse disabled) the userscript runs once per
+pipeline run against the deduped unique titles, so the cost is bounded.
+Resolved hits land in `BSNZ.title_to_bgg` as
+`{id, method: 'exact_match'|'fuzzy_match'|'manual_override', confidence}`;
+unresolved titles land in `BSNZ.unmatched_titles = [{raw, norm}, …]`.
+When `unmatched_titles` is non-empty the phase calls
+`window.bsnzShowUnmatched()` (registered by `01-ui.js`), which renders an
+inline "Unmatched titles" section in the panel body: each row shows the
+raw TM title, a numeric BGG ID input, a Save button (validates the ID
+against `BSNZ.bgg_corpus.byId` before persisting via `setOverride`), a
+"Search BGG" link to `boardgamegeek.com/geeksearch.php`, and a Skip
+button (sentinel override `setOverride(norm, null)` that suppresses the
+title in future runs). Overrides persist across Tampermonkey reloads.
+
 The IIFE closer lives in `99-footer.js` so every intermediate build artefact is
 syntactically valid JavaScript. Do not add `})();` to any other file, and do
 not add UserScript header directives outside `00-config.js`.

@@ -298,9 +298,11 @@
       await runScrapePhase(BSNZ.abortController.signal);
       setPhase('Refreshing BGG corpus');
       await runCorpusRefreshPhase(BSNZ.abortController.signal);
-      // Step 6 will insert the matcher here.
-      // Step 7's orchestrator will call bggFetchThings() conditionally and load the previous bsnz.json.
-      log('info', 'Scrape + corpus complete; later phases not yet implemented.');
+      setPhase('Matching titles');
+      await runMatchPhase(BSNZ.abortController.signal);
+      // Step 7 takes over from here — orchestrator handles optional
+      // /thing enrichment + previous-data load + merge + commit.
+      log('info', 'Scrape + corpus + match complete; later phases not yet implemented.');
       setPhase('Done');
     } catch (e) {
       log('error', 'Pipeline failed: ' + e.message);
@@ -348,6 +350,12 @@
       const added = (info && info.addedCount) != null ? info.addedCount : '?';
       setPhase(`Scraping ${slug} page ${n} (+${added})`);
       renderStats();
+    } else if (phase === 'match') {
+      setProgressIndeterminate(false);
+      const done = (info && info.done) || 0;
+      const total = (info && info.total) || 0;
+      if (total > 0) setProgress(100 * done / total);
+      setPhase(`Matching titles ${done}/${total}`);
     }
   };
 
@@ -451,6 +459,112 @@
   }
   window.bsnzOnLogEntry = renderLog;
 
+  // --- Unmatched titles section --------------------------------------------
+  // Rendered into the panel body at end-of-run when runMatchPhase reports
+  // any unresolved listings. Each row lets the user paste a BGG ID (validated
+  // against BSNZ.bgg_corpus.byId), open BGG's search for the raw title, or
+  // skip (a sentinel override that suppresses this title on future runs).
+  // The override store lives in 03-bgg-corpus.js (setOverride / getOverride);
+  // entries persist across Tampermonkey reloads via GM_setValue.
+  bsnzUi.unmatchedSection = null;
+  function buildUnmatchedSection() {
+    if (bsnzUi.unmatchedSection) return bsnzUi.unmatchedSection;
+    const section = el('div', {
+      display: 'none', marginTop: '6px',
+      borderTop: '1px solid #ddd', paddingTop: '8px'
+    });
+    section.append(
+      el('div', { fontWeight: '600', marginBottom: '4px' },
+        { text: 'Unmatched titles' }),
+      el('div', { fontSize: '11px', color: '#666', marginBottom: '6px' },
+        { text: 'Paste a BGG ID (digits) and Save, or Skip to suppress.' })
+    );
+    const list = el('div', {
+      maxHeight: '40vh', overflowY: 'auto',
+      border: '1px solid #ddd', borderRadius: '4px', padding: '4px'
+    });
+    section.append(list);
+    bsnzUi.unmatchedSection = section;
+    bsnzUi.unmatchedListEl = list;
+    if (bsnzUi.body) bsnzUi.body.append(section);
+    return section;
+  }
+
+  function renderUnmatchedRow(entry) {
+    const row = el('div', {
+      display: 'flex', alignItems: 'center', gap: '4px',
+      padding: '4px', borderBottom: '1px solid #eee', flexWrap: 'wrap'
+    });
+    const titleEl = el('span', {
+      flex: '1 1 60%', fontSize: '12px', wordBreak: 'break-word'
+    }, { text: entry.raw });
+    const idInput = el('input', {
+      width: '90px', padding: '2px 4px', fontSize: '12px',
+      border: '1px solid #aaa', borderRadius: '3px'
+    }, { type: 'text', placeholder: 'BGG ID', inputMode: 'numeric' });
+    const statusEl = el('span', {
+      fontSize: '11px', color: '#888', flex: '1 1 100%'
+    }, { text: '' });
+    const saveBtn = el('button', {
+      padding: '3px 8px', fontSize: '11px',
+      background: '#3b7ddd', color: '#fff',
+      border: 'none', borderRadius: '3px', cursor: 'pointer'
+    }, { text: 'Save', on: { click: () => {
+      const raw = (idInput.value || '').trim();
+      const id = parseInt(raw, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        statusEl.textContent = 'Enter a positive integer BGG ID.';
+        statusEl.style.color = '#c0392b';
+        return;
+      }
+      if (!BSNZ.bgg_corpus || !BSNZ.bgg_corpus.byId.has(id)) {
+        statusEl.textContent = 'ID not in corpus — refresh the corpus or check the ID.';
+        statusEl.style.color = '#c0392b';
+        return;
+      }
+      setOverride(entry.norm, id);
+      const game = BSNZ.bgg_corpus.byId.get(id);
+      statusEl.textContent = `Saved override → ${game.primaryName} (#${id}).`;
+      statusEl.style.color = '#1e8449';
+      idInput.disabled = true;
+      saveBtn.disabled = true;
+      saveBtn.style.opacity = '0.5';
+    } } });
+    const searchUrl =
+      'https://boardgamegeek.com/geeksearch.php?action=search&q=' +
+      encodeURIComponent(entry.raw) + '&objecttype=thing';
+    const searchLink = el('a', {
+      fontSize: '11px', color: '#3b7ddd', textDecoration: 'underline'
+    }, { text: 'Search BGG', href: searchUrl, target: '_blank', rel: 'noopener' });
+    const skipBtn = el('button', {
+      padding: '3px 8px', fontSize: '11px',
+      background: '#fff', color: '#555', border: '1px solid #aaa',
+      borderRadius: '3px', cursor: 'pointer'
+    }, { text: 'Skip', on: { click: () => {
+      setOverride(entry.norm, null);
+      statusEl.textContent = 'Skipped — will be suppressed on future runs.';
+      statusEl.style.color = '#7f8c8d';
+      idInput.disabled = true;
+      saveBtn.disabled = true;
+      saveBtn.style.opacity = '0.5';
+      skipBtn.disabled = true;
+      skipBtn.style.opacity = '0.5';
+    } } });
+    row.append(titleEl, idInput, saveBtn, searchLink, skipBtn, statusEl);
+    return row;
+  }
+
+  window.bsnzShowUnmatched = function (unmatched) {
+    if (!unmatched || unmatched.length === 0) return;
+    const section = buildUnmatchedSection();
+    bsnzUi.unmatchedListEl.replaceChildren();
+    for (const entry of unmatched) {
+      bsnzUi.unmatchedListEl.append(renderUnmatchedRow(entry));
+    }
+    section.style.display = 'block';
+    // Auto-restore the panel if currently minimised so the user notices.
+    if (bsnzUi.minimised) restorePanel();
+  };
 
   // --- Init -----------------------------------------------------------------
   function initPanel() {
