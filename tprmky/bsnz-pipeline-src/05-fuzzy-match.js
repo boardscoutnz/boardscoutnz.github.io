@@ -21,26 +21,10 @@
   // in buildIndexes (03-bgg-corpus.js); this is the runtime guard.
   const MIN_SINGLE_TOKEN_LEN = 6;
 
-  // Lazily-built Fuse instance over BSNZ.bgg_corpus.nameEntries. Built on
-  // first matchTitle() call and discarded when the corpus is replaced (we
-  // key it by the corpus identity via a stored reference).
-  let _fuse = null;
-  let _fuseCorpusRef = null;
-  function _getFuse() {
-    const entries = BSNZ.bgg_corpus && BSNZ.bgg_corpus.nameEntries;
-    if (!entries) return null;
-    if (_fuse && _fuseCorpusRef === entries) return _fuse;
-    if (typeof Fuse === 'undefined') return null;
-    _fuse = new Fuse(entries, {
-      keys: ['normName'],
-      includeScore: true,
-      threshold: FUZZY_MATCH_THRESHOLD,
-      ignoreLocation: true,
-      minMatchCharLength: 3
-    });
-    _fuseCorpusRef = entries;
-    return _fuse;
-  }
+  // Process titles in batches of this size, yielding to the event loop
+  // between batches so the host TM tab keeps painting and the abort signal
+  // can be observed promptly. Mirrors the js/06-matching.js pattern.
+  const MATCH_BATCH_SIZE = 250;
 
   // Walk listing tokens looking for the BGG tokens in sequence, allowing
   // arbitrary gaps. Returns {start, inOrder, contiguous}. Mirrors
@@ -178,7 +162,9 @@
     }
 
     // Tier 3 — Fuse.js fuzzy fallback against nameEntries[].normName.
-    const fuse = _getFuse();
+    // Uses the singleton Fuse instance built once in 03-bgg-corpus.js's
+    // buildIndexes (not per-call — see VERSION 0.5.2 fix).
+    const fuse = corpus.fuse;
     if (!fuse) return null;
     const hits = fuse.search(normTitle);
     if (!hits.length) return null;
@@ -201,7 +187,9 @@
     BSNZ.title_to_bgg = new Map();
     BSNZ.unmatched_titles = [];
     const uniqueTitles = [...new Set(BSNZ.tm_listings.map((l) => l.tm_title))];
-    for (let i = 0; i < uniqueTitles.length; i++) {
+    const total = uniqueTitles.length;
+    let exact = 0, fuzzy = 0, unmatched = 0;
+    for (let i = 0; i < total; i++) {
       if (signal.aborted) throw new Error('aborted');
       const raw = uniqueTitles[i];
       const norm = normaliseTitle(raw);
@@ -213,22 +201,37 @@
         } else {
           BSNZ.title_to_bgg.set(norm, { id: override.id, method: 'manual_override', confidence: 1.0 });
         }
-        continue;
+      } else {
+        const result = matchTitle(raw, norm);
+        if (result) {
+          BSNZ.title_to_bgg.set(norm, result);
+          if (result.method === 'exact_match') {
+            exact++;
+            BSNZ.stats.exact_matches = (BSNZ.stats.exact_matches || 0) + 1;
+          } else {
+            fuzzy++;
+            BSNZ.stats.fuzzy_matches = (BSNZ.stats.fuzzy_matches || 0) + 1;
+          }
+        } else {
+          unmatched++;
+          BSNZ.unmatched_titles.push({ raw, norm });
+        }
       }
 
-      const result = matchTitle(raw, norm);
-      if (result) {
-        BSNZ.title_to_bgg.set(norm, result);
-        if (result.method === 'exact_match') {
-          BSNZ.stats.exact_matches = (BSNZ.stats.exact_matches || 0) + 1;
-        } else {
-          BSNZ.stats.fuzzy_matches = (BSNZ.stats.fuzzy_matches || 0) + 1;
+      // After each batch, yield to the event loop so the host tab can
+      // paint and the abort signal can be observed. A synchronous loop
+      // over ~2000+ titles previously hung the tab silently.
+      const processed = i + 1;
+      if (processed % MATCH_BATCH_SIZE === 0 || processed === total) {
+        if (typeof window.bsnzUpdateProgress === 'function') {
+          window.bsnzUpdateProgress('match', {
+            processed, total, exact, fuzzy, unmatched
+          });
         }
-      } else {
-        BSNZ.unmatched_titles.push({ raw, norm });
-      }
-      if (typeof window.bsnzUpdateProgress === 'function') {
-        window.bsnzUpdateProgress('match', { done: i + 1, total: uniqueTitles.length });
+        log('info', `Match progress: ${processed}/${total} (${exact} exact, ${fuzzy} fuzzy, ${unmatched} unmatched)`);
+        if (processed < total) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
       }
     }
     log('info', `Match: ${BSNZ.title_to_bgg.size} matched, ${BSNZ.unmatched_titles.length} unmatched`);

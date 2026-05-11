@@ -85,6 +85,9 @@
       type: 'checkbox', checked: !!cfg.test_scrape_mode,
       on: { change: () => {
         saveConfigKey('test_scrape_mode', testCb.checked);
+        if (typeof window.bsnzRenderCategories === 'function') {
+          window.bsnzRenderCategories();
+        }
         if (testCb.checked) {
           log('info', `Test-scrape mode enabled — next run will only scrape ${TM_TEST_SUBCAT_SLUGS.join(' / ')}.`);
         } else {
