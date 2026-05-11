@@ -629,10 +629,19 @@
     });
   }
 
-  // The @run-at directive is document-idle, so DOM is normally ready. Keep
-  // the defensive readyState check in case a TM script blocks parsing.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initPanel, { once: true });
-  } else {
-    initPanel();
-  }
+  // The @run-at directive is document-idle, so DOM is normally ready.
+  // setTimeout(0) defers the boot one task tick so it fires AFTER the
+  // synchronous IIFE finishes evaluating — by which point every
+  // cross-module const/let declaration in the same closure scope (notably
+  // those in later-concatenated source files like 01d-categories.js, which
+  // buildPanel reaches into transitively) has been initialised. Without
+  // this, initPanel runs in the middle of IIFE evaluation and any reach
+  // into a later file's module-scope let triggers a TDZ ReferenceError
+  // that unwinds the IIFE permanently. v0.5.3.
+  setTimeout(() => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initPanel, { once: true });
+    } else {
+      initPanel();
+    }
+  }, 0);
