@@ -28,6 +28,26 @@ for numbered plan steps, or "<branch-slug>" for fix/chore sessions.
 
 <!-- INSERT NEW ENTRIES BELOW THIS LINE -->
 
+## fix/panel-init-tdz — 2026-05-11
+**Branch:** fix/panel-init-tdz
+**Files touched:** tprmky/bsnz-pipeline-src/00-config.js (VERSION 0.5.2 →
+0.5.3 + header), tprmky/bsnz-pipeline-src/01-ui.js (defer initPanel via
+setTimeout(0)), tprmky/bsnz-pipeline.user.js (rebuilt artefact).
+**Behaviour delta:** v0.5.2 crashed on every Trade Me page with
+`Uncaught (in promise) ReferenceError: Cannot access
+'_categoriesStyleInjected' before initialization`, leaving no FAB or
+dashboard panel and breaking both Tampermonkey menu commands. The crash
+was a TDZ: `01-ui.js`'s bottom-of-file boot block called `initPanel()`
+synchronously during IIFE evaluation, transitively reaching a
+module-scope `let` declared in the later-concatenated
+`01d-categories.js` which had not yet been hoisted-initialised. The fix
+wraps that boot call in `setTimeout(() => …, 0)` so the boot fires one
+task tick after the IIFE finishes evaluating, by which point every
+cross-module const/let in the shared closure scope is initialised. v0.5.3
+restores the FAB, dashboard panel, categories sub-panel, and both menu
+commands.
+**Follow-ups:** None.
+
 ## fix/run-pipeline-performance — 2026-05-11
 **Branch:** fix/run-pipeline-performance
 **Files touched:** tprmky/bsnz-pipeline-src/00-config.js (VERSION 0.5.1 →

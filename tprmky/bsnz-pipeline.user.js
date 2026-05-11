@@ -2,7 +2,7 @@
 // ==UserScript==
 // @name         BSNZ Pipeline
 // @namespace    https://github.com/boardscoutnz
-// @version      0.5.2
+// @version      0.5.3
 // @description  Scrape Trade Me board games, enrich with BGG, commit to GitHub.
 // @author       Gavin McGruddy
 // @match        https://www.trademe.co.nz/*
@@ -35,7 +35,7 @@
   // VERSION must match the `// @version` directive above. SCHEMA_VERSION must
   // match `data/bsnz.json` `schema_version`. Bump both together when the
   // listing-record shape changes incompatibly.
-  const VERSION = '0.5.2';
+  const VERSION = '0.5.3';
   const SCHEMA_VERSION = '1.1.0';
 
   // --- Repository / endpoint constants --------------------------------------
@@ -856,13 +856,22 @@
     });
   }
 
-  // The @run-at directive is document-idle, so DOM is normally ready. Keep
-  // the defensive readyState check in case a TM script blocks parsing.
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initPanel, { once: true });
-  } else {
-    initPanel();
-  }
+  // The @run-at directive is document-idle, so DOM is normally ready.
+  // setTimeout(0) defers the boot one task tick so it fires AFTER the
+  // synchronous IIFE finishes evaluating — by which point every
+  // cross-module const/let declaration in the same closure scope (notably
+  // those in later-concatenated source files like 01d-categories.js, which
+  // buildPanel reaches into transitively) has been initialised. Without
+  // this, initPanel runs in the middle of IIFE evaluation and any reach
+  // into a later file's module-scope let triggers a TDZ ReferenceError
+  // that unwinds the IIFE permanently. v0.5.3.
+  setTimeout(() => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initPanel, { once: true });
+    } else {
+      initPanel();
+    }
+  }, 0);
 // tprmky/bsnz-pipeline-src/01a-settings.js
 // Settings dialog UI extracted from 01-ui.js. Runs inside the shared IIFE
 // opened in 00-config.js — references el(), log(), saveConfigKey(),
