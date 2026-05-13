@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.1.0",
+  "generated_at": "1970-01-01T00:00:00Z",
+  "bgg_corpus_fetched_at": null,
+  "bgg_api_enrichment_run": false,
+  "stats": {
+    "tm_listing_count": 0,
+    "bgg_match_count": 0,
+    "manual_override_count": 0,
+    "unmatched_count": 0,
+    "bgg_api_enriched_count": 0
+  },
+  "listings": []
+}
